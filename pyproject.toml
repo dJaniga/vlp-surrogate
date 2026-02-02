@@ -1,0 +1,11 @@
+[project]
+name = "vlp-surrogate"
+version = "0.1.0"
+description = "Data-driven estimation of vertical lift performance (VLP) curves for accurate tubing head pressure (THP) simulation."
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "mypy>=1.19.1",
+    "numpy>=2.4.2",
+    "resdata>=6.2.4",
+    "ruff>=0.14.14",
+]
