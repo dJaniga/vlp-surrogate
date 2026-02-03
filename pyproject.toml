@@ -6,6 +6,13 @@ requires-python = ">=3.14,<3.15"
 dependencies = [
     "mypy>=1.19.1",
     "numpy>=2.4.2",
+    "pandera>=0.29.0",
     "resdata>=6.2.4",
     "ruff>=0.14.14",
 ]
+
+[tool.mypy]
+mypy_path = "src"
+files = ["src"]
+ignore_missing_imports = true
+allow_untyped_decorators = true
