@@ -1,6 +1,8 @@
-from dataclasses import dataclass, field
 import logging
+from dataclasses import dataclass, field
 
+import numpy as np
+import numpy.typing as npt
 import pandera.pandas as pa
 from pandera import Timestamp
 from resdata.summary import Summary
@@ -31,6 +33,17 @@ class VLPTrainingData:
     injection: VLPIData | None = field(default=None)
 
 
+@dataclass(frozen=True, slots=True)
+class FitMetrics:
+    RMSE: float
+
+
+@dataclass(frozen=True, slots=True)
+class FitResults:
+    well_name: str
+    fit_metrics: FitMetrics | None = field(default=None)
+
+
 class EclSmrReader:
     PRODUCTION_HEADER = ["WGPRH", "WTHPH", "WWGRH", "WOGRH", "WBHP"]
     PRODUCTION_REQUIRED = ["WGPRH", "WTHPH", "WBHP"]
@@ -50,6 +63,7 @@ class EclSmrReader:
         "WTHPH": "THP",
         "WBHP": "BHP",
     }
+    FIT_COLUMNS = {"Actual": "WTHPH", "Predicted": "WTHP"}
 
     @classmethod
     def prepare_training_data(cls, ecl_smr_file_path: str) -> list[VLPTrainingData]:
@@ -77,6 +91,24 @@ class EclSmrReader:
             )
 
         logger.info("Prepared training data for %d wells", len(results))
+        return results
+
+    @classmethod
+    def prepare_fit_results(cls, ecl_smr_file_path: str) -> list[FitResults]:
+        logger.info("Reading ECL summary file: %s", ecl_smr_file_path)
+        ecl_summary = Summary(ecl_smr_file_path, join_string=cls.JOIN_STRING)
+
+        wells = list(ecl_summary.wells())
+        logger.info("Found %d wells", len(wells))
+
+        results: list[FitResults] = []
+        for well in wells:
+            logger.debug("Preparing fit results for well %s", well)
+            fit_metrics = cls._calculate_fit_results(ecl_summary, well)
+            logger.debug("Fit metrics for well %s: %s", well, fit_metrics)
+
+            results.append(FitResults(well_name=well, fit_metrics=fit_metrics))
+
         return results
 
     @classmethod
@@ -146,3 +178,36 @@ class EclSmrReader:
         vlpi_df = df_required.rename(columns=rename_map)[ordered_cols]
 
         return VLPIData.validate(vlpi_df)
+
+    @classmethod
+    def _calculate_fit_results(
+        cls, summary: Summary, well_name: str
+    ) -> FitMetrics | None:
+        well_fit_columns = {
+            k: f"{v}{cls.JOIN_STRING}{well_name}" for k, v in cls.FIT_COLUMNS.items()
+        }
+        df = summary.pandas_frame(column_keys=[v for v in well_fit_columns.values()])
+        y_actual = df[well_fit_columns["Actual"]].to_numpy()
+        y_pred = df[well_fit_columns["Predicted"]].to_numpy()
+        if y_actual.size == 0 or y_pred.size == 0:
+            raise ValueError("Input arrays must not be empty.")
+        if y_actual.shape != y_pred.shape:
+            raise ValueError(
+                f"Shape mismatch: y_actual {y_actual.shape} != y_pred {y_pred.shape}"
+            )
+        if not np.any(y_actual) and not np.any(y_pred):
+            logger.debug("Well %s: no rows after non-zero filter", well_name)
+            return None
+
+        rmse = cls._calculate_rmse(y_actual, y_pred)
+        return FitMetrics(RMSE=rmse)
+
+    @classmethod
+    def _calculate_rmse(
+        cls, y_actual: npt.NDArray[np.float64], y_pred: npt.NDArray[np.float64]
+    ) -> float:
+        diff = y_actual - y_pred
+        mse = np.mean(np.square(diff))
+        rmse = float(np.sqrt(mse))
+
+        return rmse
