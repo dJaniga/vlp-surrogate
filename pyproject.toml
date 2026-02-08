@@ -4,8 +4,11 @@ version = "0.1.0"
 description = "Data-driven estimation of vertical lift performance (VLP) curves for accurate tubing head pressure (THP) simulation."
 requires-python = ">=3.14,<3.15"
 dependencies = [
+    "deap>=1.4.3",
     "mypy>=1.19.1",
     "numpy>=2.4.2",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.0",
     "pandera>=0.29.0",
     "resdata>=6.2.4",
     "ruff>=0.14.14",
@@ -16,3 +19,21 @@ mypy_path = "src"
 files = ["src"]
 ignore_missing_imports = true
 allow_untyped_decorators = true
+
+[tool.vlp_surrogate.logging]
+version = 1
+disable_existing_loggers = false
+
+[tool.vlp_surrogate.logging.formatters.standard]
+format = "%(asctime)s- %(module)-30s %(lineno)-4d - %(levelname)-8s - %(message)s%(extra)s"
+"()" = "vfp.utils.logging.ExtraFormatter"
+
+[tool.vlp_surrogate.logging.handlers.console]
+class = "logging.StreamHandler"
+formatter = "standard"
+level = "INFO"
+stream = "ext://sys.stdout"
+
+[tool.vlp_surrogate.logging.root]
+level = "INFO"
+handlers = ["console"]
