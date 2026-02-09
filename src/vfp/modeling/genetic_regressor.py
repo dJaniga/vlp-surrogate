@@ -4,7 +4,6 @@ import logging
 from dataclasses import dataclass
 
 import numpy as np
-
 from deap import algorithms, base, creator, tools
 
 from vfp.modeling.base import VFPModel
@@ -38,10 +37,10 @@ class GeneticAlgorithmRegressor(VFPModel):
         design_matrix = np.column_stack([np.ones(features.shape[0]), features])
         coeff_count = design_matrix.shape[1]
 
-        if not hasattr(creator, "FitnessMin"):
-            creator.create("FitnessMin", base.Fitness, weights=(-1.0,))
-        if not hasattr(creator, "Individual"):
-            creator.create("Individual", list, fitness=creator.FitnessMin)  # type: ignore[attr-defined]
+        if not hasattr(creator, "GAFitness"):
+            creator.create("GAFitness", base.Fitness, weights=(-1.0,))
+        if not hasattr(creator, "GAIndividual"):
+            creator.create("GAIndividual", list, fitness=creator.GAFitness)  # type: ignore[attr-defined]
 
         logger.debug(
             "GA toolbox configured",
@@ -55,7 +54,7 @@ class GeneticAlgorithmRegressor(VFPModel):
         toolbox.register(
             "individual",
             tools.initRepeat,
-            creator.Individual,  # type: ignore[attr-defined]
+            creator.GAIndividual,  # type: ignore[attr-defined]
             toolbox.coeff,  # type: ignore[attr-defined]
             n=coeff_count,
         )

@@ -6,13 +6,18 @@ from typing import Literal
 
 import numpy as np
 
-from vfp.modeling import GeneticAlgorithmRegressor, LinearRegressionModel, VFPModel
+from vfp.modeling import (
+    GeneticAlgorithmRegressor,
+    LinearRegressionModel,
+    SymbolicRegressor,
+    VFPModel,
+)
 from vfp.models import VFPDataConfig
 from vfp.preprocess import clean_dataset, get_mapping, prepare_data_for_model, read_xlsx
 
 logger = logging.getLogger(__name__)
 
-ModelName = Literal["linear", "ga"]
+ModelName = Literal["linear", "ga", "symbolic"]
 
 
 @dataclass(slots=True)
@@ -68,6 +73,8 @@ def create_model(name: ModelName, **kwargs) -> VFPModel:
         return LinearRegressionModel(**kwargs)
     if name == "ga":
         return GeneticAlgorithmRegressor(**kwargs)
+    if name == "symbolic":
+        return SymbolicRegressor(**kwargs)
     raise ValueError(f"Unsupported model name: {name}")
 
 
