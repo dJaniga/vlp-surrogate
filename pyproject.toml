@@ -12,6 +12,9 @@ dependencies = [
     "pandera>=0.29.0",
     "resdata>=6.2.4",
     "ruff>=0.14.14",
+    "scipy>=1.16.0",
+    "sympy>=1.13.0",
+    "tqdm>=4.67.3",
 ]
 
 [tool.mypy]
