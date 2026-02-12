@@ -8,7 +8,6 @@ from pydantic import Json
 logger = logging.getLogger(__name__)
 
 
-
 def _parse_vfp_file(filepath: str) -> tuple[int, float] | None:
     with open(filepath, "r") as f:
         lines = f.readlines()
@@ -18,7 +17,7 @@ def _parse_vfp_file(filepath: str) -> tuple[int, float] | None:
 
         if stripped.startswith(("VFPPROD", "VFPINJ")):
             # Search forward for first non-empty line
-            for next_line in lines[i + 1:]:
+            for next_line in lines[i + 1 :]:
                 header_line = next_line.strip()
 
                 if not header_line:
@@ -53,7 +52,7 @@ def _collect_vfp_data(folder_path: str) -> Json:
         is_inj = well_name.endswith("inj")
         base_name = well_name.replace("inj", "")
 
-        v  = _parse_vfp_file(filepath)
+        v = _parse_vfp_file(filepath)
 
         if v is None:
             continue
@@ -66,7 +65,7 @@ def _collect_vfp_data(folder_path: str) -> Json:
         key = "VFPINJ" if is_inj else "VFPPROD"
         results[base_name][key] = {
             "table number": first_value,
-            "bhp depth": second_value
+            "bhp depth": second_value,
         }
 
     return results
@@ -80,5 +79,3 @@ def vfp_well_data_collector(folder_path: str, output_json_path: str) -> None:
         json.dump(data, f, indent=4)
 
     logger.info("Collected VFP data to %s", output_json_path)
-
-

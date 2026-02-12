@@ -171,7 +171,7 @@ def _safe_evaluate_rows(func: object, features: np.ndarray) -> np.ndarray:
                 results[i] = np.nan
             else:
                 results[i] = float(value)
-        except (TypeError, ValueError, ZeroDivisionError, OverflowError):
+        except TypeError, ValueError, ZeroDivisionError, OverflowError:
             results[i] = np.nan
     return results
 

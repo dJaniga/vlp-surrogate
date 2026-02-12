@@ -66,7 +66,7 @@ def _deap_to_sympy(
                 # ephemeral constant
                 try:
                     stack.append(sympy.Float(float(node.value)))
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     return None
         elif isinstance(node, gp.Primitive):
             if node.name not in op_map:

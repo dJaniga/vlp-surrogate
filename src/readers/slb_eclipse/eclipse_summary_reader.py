@@ -1,57 +1,20 @@
 import logging
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, ClassVar, Mapping, Type
 from time import perf_counter
+from typing import ClassVar, Mapping, Type
 
 import numpy as np
 import numpy.typing as npt
 import pandera.pandas as pa
-from pandera import Timestamp
 from resdata.summary import Summary
 
-from ecl.metrics import rmse, mae
+from readers.interfaces import MetricFn
+from readers.models import VLPTrainingData, FitResults, VLPPData, VLPIData
 
 logger = logging.getLogger(__name__)
 
-MetricFn = Callable[
-    [npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.bool_]],
-    float,
-]
 
-
-class VLPPData(pa.DataFrameModel):
-    T: Timestamp
-    FLO: float
-    THP: float
-    WFR: float
-    GFR: float
-    BHP: float
-
-
-class VLPIData(pa.DataFrameModel):
-    T: Timestamp
-    FLO: float
-    THP: float
-    BHP: float
-
-
-@dataclass(frozen=True, slots=True)
-class VLPTrainingData:
-    well_name: str
-    production: VLPPData | None = field(default=None)
-    injection: VLPIData | None = field(default=None)
-
-
-@dataclass(frozen=True, slots=True)
-class FitResults:
-    well_name: str
-    overall: Mapping[str, float] = field(default_factory=dict)
-    production: Mapping[str, float] = field(default_factory=dict)
-    injection: Mapping[str, float] = field(default_factory=dict)
-
-
-class EclSmrReader:
+class EclipseSummaryReader:
     PRODUCTION_HEADER = ["WGPRH", "WTHPH", "WWGRH", "WOGRH", "WBHP"]
     PRODUCTION_REQUIRED = ["WGPRH", "WTHPH", "WBHP"]
 
@@ -460,8 +423,3 @@ def _all_nan(metrics: Mapping[str, float]) -> bool:
     if not metrics:
         return True
     return all(not np.isfinite(v) for v in metrics.values())
-
-
-# Register defaults at import time.
-EclSmrReader.register_metric("RMSE", rmse, overwrite=True)
-EclSmrReader.register_metric("MAE", mae, overwrite=True)
