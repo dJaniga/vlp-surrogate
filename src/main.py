@@ -4,9 +4,9 @@ import argparse
 import logging
 from pathlib import Path
 
-from vfp import VFPTablePipeline, create_model
-from vfp.utils.logging import setup_logging
-from vfp.models import VFPDataConfig, VFPTableConfig
+from ____vfp import VFPTablePipeline, create_model
+from ____vfp.utils.logging import setup_logging
+from ____vfp.models import VFPDataConfig, VFPTableConfig
 
 logger = logging.getLogger(__name__)
 
