@@ -9,7 +9,13 @@ import pandera.pandas as pa
 from resdata.summary import Summary
 
 from metrics import MetricFn
-from models import VLPTrainingData, SimulationFitResults, VLPPData, VLPIData
+from models import (
+    FlowData,
+    SimulationFitResults,
+    ProductionData,
+    InjectionData,
+    WellsData,
+)
 from readers import ReaderProtocol
 
 logger = logging.getLogger(__name__)
@@ -24,7 +30,6 @@ class EclipseReader(ReaderProtocol):
 
     JOIN_STRING = ":"
 
-    # Canonical column names -> ECL keys
     PRODUCTION_RENAME_MAP = {
         "FLO": "WGPRH",
         "THP": "WTHPH",
@@ -46,10 +51,7 @@ class EclipseReader(ReaderProtocol):
     # Public API
     # ---------------------------
     @classmethod
-    def prepare_training_data(
-        cls, file_path: str | Path,
-            **kwargs
-    ) -> list[VLPTrainingData]:
+    def read_wells_data(cls, file_path: str | Path, **kwargs) -> WellsData:
         """Read an ECL summary file (*.UNSMRY) and return per-well training datasets for VLP."""
 
         t0 = perf_counter()
@@ -59,7 +61,7 @@ class EclipseReader(ReaderProtocol):
         n_inj = 0
         n_empty = 0
 
-        results: list[VLPTrainingData] = []
+        results: WellsData = {}
         for well in wells:
             logger.debug("Preparing training data for well=%s", well)
             production = cls._prepare_vlpp_data(summary, well)
@@ -81,11 +83,7 @@ class EclipseReader(ReaderProtocol):
                     "Well=%s: no production/injection data after filtering", well
                 )
 
-            results.append(
-                VLPTrainingData(
-                    well_name=well, production=production, injection=injection
-                )
-            )
+            results[well] = FlowData(production=production, injection=injection)
 
         elapsed = perf_counter() - t0
         logger.info(
@@ -99,7 +97,9 @@ class EclipseReader(ReaderProtocol):
         return results
 
     @classmethod
-    def prepare_fit_results(cls, ecl_smr_file_path: str | Path) -> list[SimulationFitResults]:
+    def prepare_fit_results(
+        cls, ecl_smr_file_path: str | Path
+    ) -> list[SimulationFitResults]:
         """Read an ECL summary file and compute per-well fit metrics for registered metrics."""
         t0 = perf_counter()
         summary, wells = cls._load_summary_and_wells(ecl_smr_file_path)
@@ -201,26 +201,30 @@ class EclipseReader(ReaderProtocol):
     # Training data preparation
     # ---------------------------
     @classmethod
-    def _prepare_vlpp_data(cls, summary: Summary, well_name: str) -> VLPPData | None:
+    def _prepare_vlpp_data(
+        cls, summary: Summary, well_name: str
+    ) -> ProductionData | None:
         return cls._prepare_vlp_data(
             summary=summary,
             well_name=well_name,
             header=cls.PRODUCTION_HEADER,
             required=cls.PRODUCTION_REQUIRED,
             rename_map=cls.PRODUCTION_RENAME_MAP,
-            model=VLPPData,
+            model=ProductionData,
             label="production",
         )
 
     @classmethod
-    def _prepare_vlpi_data(cls, summary: Summary, well_name: str) -> VLPIData | None:
+    def _prepare_vlpi_data(
+        cls, summary: Summary, well_name: str
+    ) -> InjectionData | None:
         return cls._prepare_vlp_data(
             summary=summary,
             well_name=well_name,
             header=cls.INJECTION_HEADER,
             required=cls.INJECTION_REQUIRED,
             rename_map=cls.INJECTION_RENAME_MAP,
-            model=VLPIData,
+            model=InjectionData,
             label="injection",
         )
 

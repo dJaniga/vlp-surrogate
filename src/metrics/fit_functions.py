@@ -8,6 +8,7 @@ type MetricFn = Callable[
     float,
 ]
 
+
 def rmse(
     y_actual: npt.NDArray[np.float64],
     y_pred: npt.NDArray[np.float64],

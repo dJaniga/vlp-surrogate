@@ -1,5 +1,18 @@
 from models.fitting import SimulationFitResults
-from models.user import ModelName
-from models.vlp import VLPPData, VLPIData, VLPTrainingData
+from models.pipeline import WellsTrainingData, TrainingData, WellsPredictions, WellsVFPContent
+from models.user import ModelName, VFPPipelineConfig
+from models.well_data import ProductionData, InjectionData, FlowData, WellsData
 
-__all__ = ["VLPPData", "VLPIData", "VLPTrainingData", "SimulationFitResults", "ModelName"]
+__all__ = [
+    "ProductionData",
+    "InjectionData",
+    "FlowData",
+    "SimulationFitResults",
+    "ModelName",
+    "WellsData",
+    "WellsTrainingData",
+    "TrainingData",
+    "VFPPipelineConfig",
+    "WellsPredictions",
+    "WellsVFPContent"
+]

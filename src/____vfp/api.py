@@ -13,7 +13,12 @@ from modeling import (
     VFPModel,
 )
 from ____vfp.models import VFPDataConfig
-from ____vfp.preprocess import clean_dataset, get_mapping, prepare_data_for_model, read_xlsx
+from ____vfp.preprocess import (
+    clean_dataset,
+    get_mapping,
+    prepare_data_for_model,
+    read_xlsx,
+)
 
 logger = logging.getLogger(__name__)
 

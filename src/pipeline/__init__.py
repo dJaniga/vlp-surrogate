@@ -1,5 +1,3 @@
-from pipeline.builder import Builder
+from pipeline.vfp_pipeline import VFPPipeline
 
-__all__ = [
-    "Builder"
-]
+__all__ = ["VFPPipeline"]
