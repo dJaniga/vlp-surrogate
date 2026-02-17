@@ -1,66 +1,35 @@
 import logging
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, ClassVar, Mapping, Type
 from time import perf_counter
+from typing import ClassVar, Mapping, Type
 
 import numpy as np
 import numpy.typing as npt
+import pandas as pd
 import pandera.pandas as pa
-from pandera import Timestamp
 from resdata.summary import Summary
 
-from ecl.metrics import rmse, mae
+from readers.metrics import rmse, mae
+from readers.models import (
+    WellsFLowData,
+    MetricFn,
+    FlowData,
+    ProductionFlowData,
+    InjectionFlowData,
+    WellsFitResults,
+    FitResults,
+)
 
 logger = logging.getLogger(__name__)
 
-MetricFn = Callable[
-    [npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.bool_]],
-    float,
-]
 
-
-class VLPPData(pa.DataFrameModel):
-    T: Timestamp
-    FLO: float
-    THP: float
-    WFR: float
-    GFR: float
-    BHP: float
-
-
-class VLPIData(pa.DataFrameModel):
-    T: Timestamp
-    FLO: float
-    THP: float
-    BHP: float
-
-
-@dataclass(frozen=True, slots=True)
-class VLPTrainingData:
-    well_name: str
-    production: VLPPData | None = field(default=None)
-    injection: VLPIData | None = field(default=None)
-
-
-@dataclass(frozen=True, slots=True)
-class FitResults:
-    well_name: str
-    overall: Mapping[str, float] = field(default_factory=dict)
-    production: Mapping[str, float] = field(default_factory=dict)
-    injection: Mapping[str, float] = field(default_factory=dict)
-
-
-class EclSmrReader:
+class EclipseReader:
     PRODUCTION_HEADER = ["WGPRH", "WTHPH", "WWGRH", "WOGRH", "WBHP"]
-    PRODUCTION_REQUIRED = ["WGPRH", "WTHPH", "WBHP"]
 
     INJECTION_HEADER = ["WGIRH", "WTHPH", "WBHP"]
-    INJECTION_REQUIRED = ["WGIRH", "WTHPH", "WBHP"]
 
     JOIN_STRING = ":"
 
-    # Canonical column names -> ECL keys
     PRODUCTION_RENAME_MAP = {
         "FLO": "WGPRH",
         "THP": "WTHPH",
@@ -78,65 +47,53 @@ class EclSmrReader:
 
     _METRICS: ClassVar[dict[str, MetricFn]] = {}
 
-    # ---------------------------
-    # Public API
-    # ---------------------------
     @classmethod
-    def prepare_training_data(
-        cls, ecl_smr_file_path: str | Path
-    ) -> list[VLPTrainingData]:
+    def read_wells_flow_data(cls, ecl_smr_file_path: str | Path) -> WellsFLowData:
         """Read an ECL summary file and return per-well training datasets for VLP."""
-        t0 = perf_counter()
-        summary, wells = cls._load_summary_and_wells(ecl_smr_file_path)
+        summary, all_wells_name = cls._load_summary_and_wells_name(ecl_smr_file_path)
 
         n_prod = 0
         n_inj = 0
         n_empty = 0
 
-        results: list[VLPTrainingData] = []
-        for well in wells:
-            logger.debug("Preparing training data for well=%s", well)
-            production = cls._prepare_vlpp_data(summary, well)
-            injection = cls._prepare_vlpi_data(summary, well)
+        results: WellsFLowData = {}
+        for well_name in all_wells_name:
+            logger.debug("Reading flow data for well=%s", well_name)
+            production = cls._read_production_data(summary, well_name)
+            injection = cls._read_injection_data(summary, well_name)
 
             if production is None:
-                logger.debug("Well=%s: production training data unavailable", well)
+                logger.debug("Well=%s: production data unavailable", well_name)
             else:
                 n_prod += 1
 
             if injection is None:
-                logger.debug("Well=%s: injection training data unavailable", well)
+                logger.debug("Well=%s: injection data unavailable", well_name)
             else:
                 n_inj += 1
 
             if production is None and injection is None:
                 n_empty += 1
                 logger.info(
-                    "Well=%s: no production/injection data after filtering", well
+                    "Well=%s: no production/injection data after filtering", well_name
                 )
 
-            results.append(
-                VLPTrainingData(
-                    well_name=well, production=production, injection=injection
-                )
-            )
+            results[well_name] = FlowData(production=production, injection=injection)
 
-        elapsed = perf_counter() - t0
         logger.info(
-            "Prepared training data: wells=%d, prod=%d, inj=%d, empty=%d, elapsed=%.3fs",
-            len(wells),
+            "Prepared flow data: wells=%d, prod=%d, inj=%d, empty=%d",
+            len(all_wells_name),
             n_prod,
             n_inj,
             n_empty,
-            elapsed,
         )
         return results
 
     @classmethod
-    def prepare_fit_results(cls, ecl_smr_file_path: str | Path) -> list[FitResults]:
+    def calculate_wells_fits(cls, ecl_smr_file_path: str | Path) -> WellsFitResults:
         """Read an ECL summary file and compute per-well fit metrics for registered metrics."""
         t0 = perf_counter()
-        summary, wells = cls._load_summary_and_wells(ecl_smr_file_path)
+        summary, all_wells_name = cls._load_summary_and_wells_name(ecl_smr_file_path)
 
         if not cls._METRICS:
             logger.warning(
@@ -151,30 +108,29 @@ class EclSmrReader:
         n_ok = 0
         n_skipped = 0
 
-        results: list[FitResults] = []
-        for well in wells:
-            logger.debug("Preparing fit results for well=%s", well)
-            fit_results = cls._calculate_fit_results(summary, well)
+        results: WellsFitResults = {}
+        for well_name in all_wells_name:
+            logger.debug("Preparing fit results for well=%s", well_name)
+            fit_results = cls._calculate_fit_results(summary, well_name)
             if fit_results is None:
                 n_skipped += 1
-                logger.info("Well=%s: fit results skipped (missing/empty data)", well)
+                logger.info(
+                    "Well=%s: fit results skipped (missing/empty data)", well_name
+                )
                 continue
             n_ok += 1
-            results.append(fit_results)
+            results[well_name] = fit_results
 
         elapsed = perf_counter() - t0
         logger.info(
             "Prepared fit results: wells=%d, ok=%d, skipped=%d, elapsed=%.3fs",
-            len(wells),
+            len(all_wells_name),
             n_ok,
             n_skipped,
             elapsed,
         )
         return results
 
-    # ---------------------------
-    # Metric registry
-    # ---------------------------
     @classmethod
     def register_metric(
         cls, name: str, fn: MetricFn, *, overwrite: bool = False
@@ -209,11 +165,8 @@ class EclSmrReader:
     def list_metrics(cls) -> tuple[str, ...]:
         return tuple(cls._METRICS.keys())
 
-    # ---------------------------
-    # Summary loading
-    # ---------------------------
     @classmethod
-    def _load_summary_and_wells(
+    def _load_summary_and_wells_name(
         cls, ecl_smr_file_path: str | Path
     ) -> tuple[Summary, list[str]]:
         path = str(ecl_smr_file_path)
@@ -231,47 +184,44 @@ class EclSmrReader:
         logger.debug("Wells=%s", wells)
         return summary, wells
 
-    # ---------------------------
-    # Training data preparation
-    # ---------------------------
     @classmethod
-    def _prepare_vlpp_data(cls, summary: Summary, well_name: str) -> VLPPData | None:
-        return cls._prepare_vlp_data(
+    def _read_production_data(
+        cls, summary: Summary, well_name: str
+    ) -> pd.DataFrame | None:
+        return cls._read_flow_data(
             summary=summary,
             well_name=well_name,
             header=cls.PRODUCTION_HEADER,
-            required=cls.PRODUCTION_REQUIRED,
             rename_map=cls.PRODUCTION_RENAME_MAP,
-            model=VLPPData,
+            model=ProductionFlowData,
             label="production",
         )
 
     @classmethod
-    def _prepare_vlpi_data(cls, summary: Summary, well_name: str) -> VLPIData | None:
-        return cls._prepare_vlp_data(
+    def _read_injection_data(
+        cls, summary: Summary, well_name: str
+    ) -> pd.DataFrame | None:
+        return cls._read_flow_data(
             summary=summary,
             well_name=well_name,
             header=cls.INJECTION_HEADER,
-            required=cls.INJECTION_REQUIRED,
             rename_map=cls.INJECTION_RENAME_MAP,
-            model=VLPIData,
+            model=InjectionFlowData,
             label="injection",
         )
 
     @classmethod
-    def _prepare_vlp_data(
+    def _read_flow_data(
         cls,
         *,
         summary: Summary,
         well_name: str,
         header: list[str],
-        required: list[str],
         rename_map: dict[str, str],
         model: Type[pa.DataFrameModel],
         label: str,
-    ) -> pa.DataFrameModel | None:
+    ) -> pd.DataFrame | None:
         column_keys = [f"{h}{cls.JOIN_STRING}{well_name}" for h in header]
-        required_cols = [f"{h}{cls.JOIN_STRING}{well_name}" for h in required]
 
         df = summary.pandas_frame(column_keys=column_keys)
         logger.debug(
@@ -282,27 +232,17 @@ class EclSmrReader:
             len(df.columns),
         )
 
-        missing_required = [col for col in required_cols if col not in df.columns]
-        if missing_required:
-            logger.info(
-                "Well=%s (%s): missing required columns=%s",
-                well_name,
-                label,
-                missing_required,
-            )
-            return None
-
-        mask = (df[required_cols] != 0).all(axis=1)
-        df_required = df.loc[mask].reset_index(names="T")
+        positive_value_mask = (df[column_keys] >= 0).all(axis=1)
+        df_required = df.loc[positive_value_mask].reset_index(names="T")
         logger.debug(
-            "Well=%s (%s): non-zero filter kept=%d/%d",
+            "Well=%s (%s): positive filter kept=%d/%d",
             well_name,
             label,
             len(df_required),
             len(df),
         )
         if df_required.empty:
-            logger.info("Well=%s (%s): no rows after non-zero filter", well_name, label)
+            logger.info("Well=%s (%s): no rows after positive filter", well_name, label)
             return None
 
         # Convert "ECLKEY:WELL" -> "CANONICAL"
@@ -413,7 +353,6 @@ class EclSmrReader:
         )
 
         return FitResults(
-            well_name=well_name,
             overall=overall,
             production=production_metrics,
             injection=injection_metrics,
@@ -463,5 +402,5 @@ def _all_nan(metrics: Mapping[str, float]) -> bool:
 
 
 # Register defaults at import time.
-EclSmrReader.register_metric("RMSE", rmse, overwrite=True)
-EclSmrReader.register_metric("MAE", mae, overwrite=True)
+EclipseReader.register_metric("RMSE", rmse, overwrite=True)
+EclipseReader.register_metric("MAE", mae, overwrite=True)
