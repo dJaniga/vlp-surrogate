@@ -9,7 +9,6 @@ from vfp.builder import prepare_table_body, VFPTable, VFPType
 from vfp.export import export_VFP_table
 from vfp.modeling import VFPModel
 from vfp.preprocess import (
-    clean_data,
     get_training_data,
     to_prediction_format,
     reshape_predictions,
@@ -84,11 +83,8 @@ def _pipeline(
 ):
     model = copy.deepcopy(reference_model)
 
-    cleaned_data = clean_data(well_data)
-    if cleaned_data.empty:
-        return None
     valid_operating_conditions = filter_valid_operating_conditions(
-        cleaned_data, required_valid_operation_condition_keys
+        well_data, required_valid_operation_condition_keys
     )
     if valid_operating_conditions.empty:
         return None
