@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 
 from toolbox import setup_logging
-from vfp import run_pipeline
+from vfp import run_pipeline, run_evaluator
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,9 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     parser_evaluator.add_argument(
+        "--output-folder", type=Path, help="Path to output folder", required=True
+    )
+    parser_evaluator.add_argument(
         "--well-data-filter-file",
         type=Path,
         help="Path to well data filter file [*.json]",
@@ -79,13 +82,19 @@ def main():
             vfp_details_file_path=parsed_args.vfp_details_file,
             model_name=parsed_args.model_name,
             output_folder_path=parsed_args.output_folder,
-            well_data_filer_path=parsed_args.well_data_filter_file,
+            well_data_filter_path=parsed_args.well_data_filter_file,
             table_granularity=parsed_args.table_granularity,
         )
+        logger.info("Pipeline completed")
 
     if parsed_args.mode == "evaluator":
         logger.info("Running in evaluator mode", extra={"Parsed args": parsed_args})
-        pass
+        run_evaluator(
+            source_file_path=parsed_args.input_file,
+            output_folder_path=parsed_args.output_folder,
+            well_data_filter_path=parsed_args.well_data_filter_file,
+        )
+        logger.info("Evaluator completed")
 
 
 if __name__ == "__main__":

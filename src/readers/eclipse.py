@@ -1,19 +1,18 @@
 import logging
 from datetime import datetime
 from pathlib import Path
-from time import perf_counter
-from typing import ClassVar, Mapping, Type
+from typing import Type
+from dataclasses import dataclass, field
+from typing import Mapping
 
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 import pandera.pandas as pa
 from resdata.summary import Summary
 
 from readers.base import ReaderInterface
 from readers.models import (
-    WellsFLowData,
-    MetricFn,
+    WellsFlowData,
     FlowData,
     ProductionFlowData,
     InjectionFlowData,
@@ -21,469 +20,453 @@ from readers.models import (
     FitResults,
     WellDataFilter,
 )
-from toolbox.fit_metrics import rmse, mae
+from toolbox.fit_metrics import all_fit_metrics
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class EclipseConfig:
+    production_header: tuple[str, ...] = ("WGPRH", "WTHPH", "WWGRH", "WOGRH", "WBHP")
+    injection_header: tuple[str, ...] = ("WGIRH", "WTHPH", "WBHP")
+
+    production_rename: Mapping[str, str] = field(
+        default_factory=lambda: {
+            "FLO": "WGPRH",
+            "THP": "WTHPH",
+            "WFR": "WWGRH",
+            "GFR": "WOGRH",
+            "BHP": "WBHP",
+        }
+    )
+
+    injection_rename: Mapping[str, str] = field(
+        default_factory=lambda: {
+            "FLO": "WGIRH",
+            "THP": "WTHPH",
+            "BHP": "WBHP",
+        }
+    )
+
+    fit_columns: Mapping[str, str] = field(
+        default_factory=lambda: {"actual": "WTHPH", "predicted": "WTHP"}
+    )
+
+    join_string: str = ":"
+
+
 class EclipseReader(ReaderInterface):
-    PRODUCTION_HEADER = ["WGPRH", "WTHPH", "WWGRH", "WOGRH", "WBHP"]
-
-    INJECTION_HEADER = ["WGIRH", "WTHPH", "WBHP"]
-
-    JOIN_STRING = ":"
-
-    PRODUCTION_RENAME_MAP = {
-        "FLO": "WGPRH",
-        "THP": "WTHPH",
-        "WFR": "WWGRH",
-        "GFR": "WOGRH",
-        "BHP": "WBHP",
-    }
-    INJECTION_RENAME_MAP = {
-        "FLO": "WGIRH",
-        "THP": "WTHPH",
-        "BHP": "WBHP",
-    }
-
-    FIT_COLUMNS = {"Actual": "WTHPH", "Predicted": "WTHP"}
-
-    _METRICS: ClassVar[dict[str, MetricFn]] = {}
+    def __init__(self, summary: Summary, config: EclipseConfig | None = None):
+        self.summary = summary
+        self.config = config or EclipseConfig()
+        self._wells = list(self.summary.wells())
+        logger.debug(
+            "EclipseReader initialized",
+            extra={
+                "wells_count": len(self._wells),
+                "join_string": self.config.join_string,
+            },
+        )
 
     @classmethod
+    def from_file(cls, ecl_smr_file_path: str | Path) -> "EclipseReader":
+        path = str(ecl_smr_file_path)
+        logger.info("Loading summary file", extra={"path": path})
+        try:
+            summary = Summary(path, join_string=":", lazy_load=True)
+        except Exception:
+            logger.exception("Failed to load summary file", extra={"path": path})
+            raise
+        logger.debug("Summary file loaded", extra={"path": path})
+        return cls(summary)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def read_wells_flow_data(
-        cls,
-        ecl_smr_file_path: str | Path,
-        well_data_filter: WellDataFilter | None = None,
-    ) -> WellsFLowData:
-        """Read an ECL summary file and return per-well training datasets for VLP."""
-        summary, all_wells_name = cls._load_summary_and_wells_name(ecl_smr_file_path)
+        self, well_data_filter: WellDataFilter | None = None
+    ) -> WellsFlowData:
+        wells_to_read, time_from, time_to = self._resolve_filter(well_data_filter)
+        logger.info(
+            "Reading wells flow data",
+            extra={
+                "wells_count": len(wells_to_read),
+                "time_from": time_from,
+                "time_to": time_to,
+            },
+        )
+        self._validate_wells_exist(wells_to_read)
 
-        n_prod = 0
-        n_inj = 0
-        n_empty = 0
+        results: WellsFlowData = {}
 
-        results: WellsFLowData = {}
+        for well in wells_to_read:
+            logger.debug("Reading well", extra={"well": well})
 
-        wells_filter = well_data_filter.wells if well_data_filter else None
-
-        time_filter = well_data_filter.time if well_data_filter else None
-        time_from = time_filter.from_T if time_filter else None
-        time_to = time_filter.to_T if time_filter else None
-
-        wells_to_read = all_wells_name if wells_filter is None else wells_filter
-
-        logger.info("Extracting flow data", extra={"Wells to read": wells_to_read})
-        if time_filter:
-            logger.info("Time filter", extra={"From": time_from, "To": time_to})
-
-        for well_name in wells_to_read:
-            logger.debug("Preparing flow data", extra={"Well name": well_name})
-            production = cls._read_production_data(
-                summary, well_name, time_from, time_to
+            production = self._read_flow_data(
+                well,
+                header=self.config.production_header,
+                rename_map=self.config.production_rename,
+                model=ProductionFlowData,
+                label="production",
+                time_from=time_from,
+                time_to=time_to,
             )
-            injection = cls._read_injection_data(summary, well_name, time_from, time_to)
 
-            if production is None:
-                logger.warning(
-                    "Production data unavailable",
-                    extra={"Well": well_name, "Label": "production"},
-                )
-            else:
-                n_prod += 1
-
-            if injection is None:
-                logger.warning(
-                    "Injection data unavailable",
-                    extra={"Well": well_name, "Label": "injection"},
-                )
-            else:
-                n_inj += 1
+            injection = self._read_flow_data(
+                well,
+                header=self.config.injection_header,
+                rename_map=self.config.injection_rename,
+                model=InjectionFlowData,
+                label="injection",
+                time_from=time_from,
+                time_to=time_to,
+            )
 
             if production is None and injection is None:
-                n_empty += 1
                 logger.warning(
-                    "Both production and injection data unavailable",
-                    extra={"Well": well_name},
+                    "No flow data after filtering",
+                    extra={"well": well, "time_from": time_from, "time_to": time_to},
                 )
 
-            results[well_name] = FlowData(production=production, injection=injection)
+            results[well] = FlowData(production=production, injection=injection)
 
         logger.info(
-            "Prepared flow data",
-            extra={
-                "Wells read": len(results),
-                "Production": n_prod,
-                "Injection": n_inj,
-                "Empty": n_empty,
-            },
+            "Completed reading wells flow data", extra={"wells_count": len(results)}
         )
         return results
 
-    @classmethod
-    def calculate_wells_fits(cls, ecl_smr_file_path: str | Path) -> WellsFitResults:
-        """Read an ECL summary file and compute per-well fit metrics for registered metrics."""
-        t0 = perf_counter()
-        summary, all_wells_name = cls._load_summary_and_wells_name(ecl_smr_file_path)
-
-        if not cls._METRICS:
-            logger.warning(
-                "No metrics registered; fit results will be empty. "
-                "Register at least one metric via EclSmrReader.register_metric()."
-            )
-        else:
-            logger.info(
-                "Computing fit results using metrics=%s", ", ".join(cls.list_metrics())
-            )
-
-        n_ok = 0
-        n_skipped = 0
+    def calculate_wells_fits(
+        self, well_data_filter: WellDataFilter | None = None
+    ) -> WellsFitResults:
+        wells_to_read, time_from, time_to = self._resolve_filter(well_data_filter)
+        logger.info(
+            "Calculating wells fits",
+            extra={
+                "wells_count": len(wells_to_read),
+                "time_from": time_from,
+                "time_to": time_to,
+            },
+        )
+        self._validate_wells_exist(wells_to_read)
 
         results: WellsFitResults = {}
-        for well_name in all_wells_name:
-            logger.debug("Preparing fit results for well=%s", well_name)
-            fit_results = cls._calculate_fit_results(summary, well_name)
-            if fit_results is None:
-                n_skipped += 1
-                logger.info(
-                    "Well=%s: fit results skipped (missing/empty data)", well_name
-                )
-                continue
-            n_ok += 1
-            results[well_name] = fit_results
 
-        elapsed = perf_counter() - t0
+        for well in wells_to_read:
+            logger.debug("Calculating fit for well", extra={"well": well})
+            fit = self._calculate_fit_results(well, time_from, time_to)
+            if fit is not None:
+                results[well] = fit
+            else:
+                logger.debug("No fit results for well", extra={"well": well})
+
         logger.info(
-            "Prepared fit results: wells=%d, ok=%d, skipped=%d, elapsed=%.3fs",
-            len(all_wells_name),
-            n_ok,
-            n_skipped,
-            elapsed,
+            "Completed calculating wells fits",
+            extra={"wells_with_results": len(results)},
         )
         return results
 
-    @classmethod
-    def register_metric(
-        cls, name: str, fn: MetricFn, *, overwrite: bool = False
-    ) -> None:
-        """Register a new metric function available to fit calculations."""
-        if not name or not name.strip():
-            raise ValueError("Metric name must be a non-empty string.")
-        if (name in cls._METRICS) and not overwrite:
-            raise ValueError(
-                f"Metric '{name}' is already registered. Use overwrite=True."
-            )
+    # ------------------------------------------------------------------
+    # Core helpers
+    # ------------------------------------------------------------------
 
-        cls._METRICS[name] = fn
-        logger.info(
-            "Registered metric name=%s overwrite=%s (total=%d)",
-            name,
-            overwrite,
-            len(cls._METRICS),
-        )
-
-    @classmethod
-    def unregister_metric(cls, name: str) -> None:
-        removed = cls._METRICS.pop(name, None) is not None
-        logger.info(
-            "Unregistered metric name=%s removed=%s (total=%d)",
-            name,
-            removed,
-            len(cls._METRICS),
-        )
-
-    @classmethod
-    def list_metrics(cls) -> tuple[str, ...]:
-        return tuple(cls._METRICS.keys())
-
-    @classmethod
-    def _load_summary_and_wells_name(
-        cls, ecl_smr_file_path: str | Path
-    ) -> tuple[Summary, list[str]]:
-        path = str(ecl_smr_file_path)
-        logger.info("Loading summary file", extra={"Path": path})
-        try:
-            summary = Summary(path, join_string=cls.JOIN_STRING, lazy_load=True)
-            wells = list(summary.wells())
-        except Exception:
-            logger.exception("Failed to read ECL summary file path=%s", path)
-            raise
-
-        logger.info("Loaded summary file", extra={"All wells read from summary": wells})
-
-        return summary, wells
-
-    @classmethod
-    def _read_production_data(
-        cls,
-        summary: Summary,
-        well_name: str,
-        time_from: datetime | None = None,
-        time_to: datetime | None = None,
-    ) -> pd.DataFrame | None:
-        return cls._read_flow_data(
-            summary=summary,
-            well_name=well_name,
-            header=cls.PRODUCTION_HEADER,
-            rename_map=cls.PRODUCTION_RENAME_MAP,
-            model=ProductionFlowData,
-            label="production",
-            time_from=time_from,
-            time_to=time_to,
-        )
-
-    @classmethod
-    def _read_injection_data(
-        cls,
-        summary: Summary,
-        well_name: str,
-        time_from: datetime | None = None,
-        time_to: datetime | None = None,
-    ) -> pd.DataFrame | None:
-        return cls._read_flow_data(
-            summary=summary,
-            well_name=well_name,
-            header=cls.INJECTION_HEADER,
-            rename_map=cls.INJECTION_RENAME_MAP,
-            model=InjectionFlowData,
-            label="injection",
-            time_from=time_from,
-            time_to=time_to,
-        )
-
-    @classmethod
     def _read_flow_data(
-        cls,
+        self,
+        well: str,
         *,
-        summary: Summary,
-        well_name: str,
-        header: list[str],
-        rename_map: dict[str, str],
+        header: tuple[str, ...],
+        rename_map: Mapping[str, str],
         model: Type[pa.DataFrameModel],
         label: str,
-        time_from: datetime | None = None,
-        time_to: datetime | None = None,
+        time_from: datetime | None,
+        time_to: datetime | None,
     ) -> pd.DataFrame | None:
-        column_keys = [f"{h}{cls.JOIN_STRING}{well_name}" for h in header]
 
-        df = summary.pandas_frame(column_keys=column_keys)
-
+        column_keys = self._column_keys(header, well)
         logger.debug(
-            "Loaded frame",
-            extra={"Well name": well_name, "Label": label, "Rows": len(df)},
+            "Reading flow data frame",
+            extra={"well": well, "label": label, "columns_count": len(column_keys)},
         )
 
-        # 1. Keep only rows with non-negative values
-        positive_value_mask = (df[column_keys] >= 0).all(axis=1)
-        df_required = df.loc[positive_value_mask]
+        try:
+            df = self.summary.pandas_frame(column_keys=column_keys)
+        except Exception:
+            logger.exception(
+                "Failed to read pandas frame from summary",
+                extra={"well": well, "label": label, "column_keys": column_keys},
+            )
+            raise
+
+        self._assert_datetime_index(df)
+
+        before_rows = len(df)
+        df = self._filter_non_negative(df, column_keys)
         logger.debug(
-            "Positive filter",
+            "Applied non-negative filter",
             extra={
-                "Well name": well_name,
-                "Label": label,
-                "Rows before": len(df),
-                "Rows after": len(df_required),
+                "well": well,
+                "label": label,
+                "rows_before": before_rows,
+                "rows_after": len(df),
             },
         )
-        if df_required.empty:
-            logger.warning(
-                "No rows after positive filter",
-                extra={"Well name": well_name, "Label": label},
+        if df.empty:
+            logger.info(
+                "No rows left after non-negative filter",
+                extra={"well": well, "label": label},
             )
             return None
 
-        # 2. Apply time filtering on index (DatetimeIndex assumed)
-        if time_from is not None or time_to is not None:
-            time_mask = pd.Series(True, index=df_required.index)
-
-            if time_from is not None:
-                time_mask &= df_required.index >= time_from
-
-            if time_to is not None:
-                time_mask &= df_required.index <= time_to
-
-            before_time_filter = len(df_required)
-            df_required = df_required.loc[time_mask]
-
-            logger.debug(
-                "Time filter",
+        before_rows = len(df)
+        df = self._apply_time_filter(df, time_from, time_to)
+        logger.debug(
+            "Applied time filter",
+            extra={
+                "well": well,
+                "label": label,
+                "time_from": time_from,
+                "time_to": time_to,
+                "rows_before": before_rows,
+                "rows_after": len(df),
+            },
+        )
+        if df.empty:
+            logger.info(
+                "No rows left after time filter",
                 extra={
-                    "Well name": well_name,
-                    "Label": label,
-                    "Rows before": before_time_filter,
-                    "Rows after": len(df_required),
+                    "well": well,
+                    "label": label,
+                    "time_from": time_from,
+                    "time_to": time_to,
                 },
             )
+            return None
 
-            if df_required.empty:
-                logger.warning(
-                    "No rows after time filter",
-                    extra={"Well name": well_name, "Label": label},
-                )
-                return None
+        df = df.reset_index(names="T")
+        df = self._rename_columns(df, rename_map, well)
 
-        # 3. Move index to column "T"
-        df_required = df_required.reset_index(names="T")
-
-        # 4. Convert "ECLKEY:WELL" -> canonical names
-        reverse_rename = {
-            f"{v}{cls.JOIN_STRING}{well_name}": k for (k, v) in rename_map.items()
-        }
-        ordered_cols = ["T", *rename_map.keys()]
-        vlp_df = df_required.rename(columns=reverse_rename)[ordered_cols]
-
+        logger.debug(
+            "Validating flow data frame",
+            extra={
+                "well": well,
+                "label": label,
+                "rows": len(df),
+                "columns": list(df.columns),
+            },
+        )
         try:
-            validated = model.validate(vlp_df)
+            validated = model.validate(df)
         except Exception:
             logger.exception(
-                "Validation failed", extra={"Well name": well_name, "Label": label}
+                "Validation failed",
+                extra={"well": well, "label": label, "rows": len(df)},
             )
             raise
 
-        logger.debug(
-            "Validation ok",
-            extra={"Well name": well_name, "Label": label, "Rows": len(vlp_df)},
+        logger.info(
+            "Flow data read successfully",
+            extra={"well": well, "label": label, "rows": len(validated)},
         )
         return validated
 
-    # ---------------------------
-    # Fit metric calculations
-    # ---------------------------
-    @classmethod
     def _calculate_fit_results(
-        cls, summary: Summary, well_name: str
+        self,
+        well: str,
+        time_from: datetime | None,
+        time_to: datetime | None,
     ) -> FitResults | None:
-        well_fit_columns = {
-            k: f"{v}{cls.JOIN_STRING}{well_name}" for k, v in cls.FIT_COLUMNS.items()
+
+        fit_cols = {
+            k: f"{v}{self.config.join_string}{well}"
+            for k, v in self.config.fit_columns.items()
         }
 
-        production = f"{cls.PRODUCTION_RENAME_MAP['FLO']}{cls.JOIN_STRING}{well_name}"
-        injection = f"{cls.INJECTION_RENAME_MAP['FLO']}{cls.JOIN_STRING}{well_name}"
-
-        column_keys = [*well_fit_columns.values(), production, injection]
-        df = summary.pandas_frame(column_keys=column_keys)
-
-        required_cols = [*well_fit_columns.values(), production, injection]
-        missing = [c for c in required_cols if c not in df.columns]
-        if missing:
-            logger.info("Well=%s: missing fit columns=%s", well_name, missing)
-            return None
-
-        y_actual = df[well_fit_columns["Actual"]].to_numpy(dtype=np.float64, copy=False)
-        y_pred = df[well_fit_columns["Predicted"]].to_numpy(
-            dtype=np.float64, copy=False
+        prod_key = (
+            f"{self.config.production_rename['FLO']}{self.config.join_string}{well}"
+        )
+        inj_key = (
+            f"{self.config.injection_rename['FLO']}{self.config.join_string}{well}"
         )
 
-        if y_actual.size == 0 or y_pred.size == 0:
-            logger.info("Well=%s: empty actual/pred arrays", well_name)
-            return None
-        if y_actual.shape != y_pred.shape:
-            logger.info(
-                "Well=%s: shape mismatch y_actual=%s y_pred=%s",
-                well_name,
-                y_actual.shape,
-                y_pred.shape,
+        column_keys = [*fit_cols.values(), prod_key, inj_key]
+        df = self.summary.pandas_frame(column_keys=column_keys)
+
+        missing = [c for c in column_keys if c not in df.columns]
+        if missing:
+            logger.warning(
+                "Missing columns for fit calculation",
+                extra={"well": well, "missing": missing, "requested": column_keys},
             )
             return None
 
-        if not np.any(y_actual) and not np.any(y_pred):
-            logger.debug("Well %s: no rows after non-zero filter", well_name)
+        self._assert_datetime_index(df)
+        before_rows = len(df)
+        df = self._apply_time_filter(df, time_from, time_to)
+        if df.empty:
+            logger.info(
+                "No rows left after time filter for fit calculation",
+                extra={
+                    "well": well,
+                    "time_from": time_from,
+                    "time_to": time_to,
+                    "rows_before": before_rows,
+                },
+            )
             return None
 
-        # Masks for slices
-        mask_overall = np.ones_like(y_actual, dtype=bool)
-        mask_production = (df[production] > 0).to_numpy()
-        mask_injection = (df[injection] > 0).to_numpy()
+        y_actual = df[fit_cols["actual"]].to_numpy(dtype=np.float64, copy=False)
+        y_pred = df[fit_cols["predicted"]].to_numpy(dtype=np.float64, copy=False)
 
-        logger.debug(
-            "Well=%s: samples total=%d production=%d injection=%d",
-            well_name,
-            y_actual.size,
-            int(np.sum(mask_production)),
-            int(np.sum(mask_injection)),
-        )
+        if y_actual.size == 0 or y_actual.shape != y_pred.shape:
+            logger.warning(
+                "Fit arrays have invalid shape/size",
+                extra={
+                    "well": well,
+                    "y_actual_shape": getattr(y_actual, "shape", None),
+                    "y_pred_shape": getattr(y_pred, "shape", None),
+                },
+            )
+            return None
 
-        overall = cls._compute_metrics(
-            y_actual, y_pred, mask_overall, context=f"well={well_name} slice=overall"
-        )
-        production_metrics = cls._compute_metrics(
-            y_actual,
-            y_pred,
-            mask_production,
-            context=f"well={well_name} slice=production",
-        )
-        injection_metrics = cls._compute_metrics(
-            y_actual,
-            y_pred,
-            mask_injection,
-            context=f"well={well_name} slice=injection",
-        )
+        finite_mask = np.isfinite(y_actual) & np.isfinite(y_pred)
+        if not np.any(finite_mask):
+            logger.info("No finite points for fit calculation", extra={"well": well})
+            return None
 
-        if (
-            _all_nan(overall)
-            and _all_nan(production_metrics)
-            and _all_nan(injection_metrics)
-        ):
-            logger.info("Well=%s: all metrics are NaN (no usable rows)", well_name)
+        mask_overall = finite_mask
+        mask_prod = finite_mask & (df[prod_key].to_numpy() > 0)
+        mask_inj = finite_mask & (df[inj_key].to_numpy() > 0)
+
+        overall = all_fit_metrics(y_actual, y_pred, mask_overall)
+        production = all_fit_metrics(y_actual, y_pred, mask_prod)
+        injection = all_fit_metrics(y_actual, y_pred, mask_inj)
+
+        if _all_nan(overall) and _all_nan(production) and _all_nan(injection):
+            logger.info("All fit metrics are NaN; skipping", extra={"well": well})
             return None
 
         logger.debug(
-            "Well=%s: metrics computed overall=%s production=%s injection=%s",
-            well_name,
-            overall,
-            production_metrics,
-            injection_metrics,
+            "Fit metrics computed",
+            extra={
+                "well": well,
+                "overall": overall,
+                "production": production,
+                "injection": injection,
+                "n_points_overall": int(np.sum(mask_overall)),
+                "n_points_prod": int(np.sum(mask_prod)),
+                "n_points_inj": int(np.sum(mask_inj)),
+            },
+        )
+
+        out = pd.DataFrame(
+            {
+                "actual": y_actual,
+                "predicted": y_pred,
+                "production_mask": mask_prod,
+                "injection_mask": mask_inj,
+            },
         )
 
         return FitResults(
             overall=overall,
-            production=production_metrics,
-            injection=injection_metrics,
+            production=production,
+            injection=injection,
+            data_frame=out,
         )
 
-    @classmethod
-    def _compute_metrics(
-        cls,
-        y_actual: npt.NDArray[np.float64],
-        y_pred: npt.NDArray[np.float64],
-        mask: npt.NDArray[np.bool_],
-        *,
-        context: str,
-    ) -> dict[str, float]:
-        out: dict[str, float] = {}
-        if not cls._METRICS:
-            logger.debug("No metrics registered (%s)", context)
-            return out
+    # ------------------------------------------------------------------
+    # Shared utilities
+    # ------------------------------------------------------------------
 
-        for name, fn in cls._METRICS.items():
-            t0 = perf_counter()
-            try:
-                value = float(fn(y_actual, y_pred, mask))
-            except Exception:
-                logger.exception(
-                    "Metric failed name=%s (%s); recording NaN", name, context
-                )
-                value = float("nan")
+    def _resolve_filter(self, well_data_filter: WellDataFilter | None):
+        wells = (
+            well_data_filter.wells
+            if well_data_filter and well_data_filter.wells
+            else self._wells
+        )
+        time_from = (
+            well_data_filter.time.from_T
+            if well_data_filter and well_data_filter.time
+            else None
+        )
+        time_to = (
+            well_data_filter.time.to_T
+            if well_data_filter and well_data_filter.time
+            else None
+        )
+        logger.debug(
+            "Resolved well filter",
+            extra={
+                "wells_count": len(wells),
+                "time_from": time_from,
+                "time_to": time_to,
+            },
+        )
+        return wells, time_from, time_to
 
-            out[name] = value
-            elapsed = perf_counter() - t0
-            logger.debug(
-                "Metric computed name=%s value=%s elapsed=%.4fs (%s)",
-                name,
-                value,
-                elapsed,
-                context,
+    def _validate_wells_exist(self, wells: list[str]) -> None:
+        unknown = set(wells) - set(self._wells)
+        if unknown:
+            logger.error(
+                "Unknown wells requested",
+                extra={
+                    "unknown": sorted(unknown),
+                    "known_wells_count": len(self._wells),
+                },
             )
+            raise ValueError(f"Unknown wells requested: {sorted(unknown)}")
 
-        return out
+    def _column_keys(self, headers: tuple[str, ...], well: str) -> list[str]:
+        return [f"{h}{self.config.join_string}{well}" for h in headers]
+
+    @staticmethod
+    def _assert_datetime_index(df: pd.DataFrame) -> None:
+        if not isinstance(df.index, pd.DatetimeIndex):
+            logger.error(
+                "Expected DataFrame with DatetimeIndex",
+                extra={"index_type": type(df.index).__name__},
+            )
+            raise TypeError("Expected DataFrame with DatetimeIndex")
+
+    @staticmethod
+    def _filter_non_negative(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+        mask = (df[columns] >= 0).all(axis=1)
+        return df.loc[mask]
+
+    @staticmethod
+    def _apply_time_filter(
+        df: pd.DataFrame,
+        time_from: datetime | None,
+        time_to: datetime | None,
+    ) -> pd.DataFrame:
+
+        if time_from is None and time_to is None:
+            return df
+
+        mask = pd.Series(True, index=df.index)
+
+        if time_from is not None:
+            mask &= df.index >= time_from
+
+        if time_to is not None:
+            mask &= df.index <= time_to
+
+        return df.loc[mask]
+
+    def _rename_columns(
+        self,
+        df: pd.DataFrame,
+        rename_map: Mapping[str, str],
+        well: str,
+    ) -> pd.DataFrame:
+        reverse = {
+            f"{v}{self.config.join_string}{well}": k for k, v in rename_map.items()
+        }
+        ordered = ["T", *rename_map.keys()]
+        return df.rename(columns=reverse)[ordered]
 
 
 def _all_nan(metrics: Mapping[str, float]) -> bool:
     if not metrics:
         return True
     return all(not np.isfinite(v) for v in metrics.values())
-
-
-# Register defaults at import time.
-EclipseReader.register_metric("RMSE", rmse, overwrite=True)
-EclipseReader.register_metric("MAE", mae, overwrite=True)

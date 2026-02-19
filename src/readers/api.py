@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Type
 
 
 from readers.base import ReaderInterface
@@ -8,6 +7,6 @@ from readers.eclipse import EclipseReader
 MAPPING = {".unsmry": EclipseReader}
 
 
-def get_reader_by_file_suffix(file_path: Path) -> Type[ReaderInterface]:
+def initialize_reader_from_path(file_path: Path) -> ReaderInterface:
     suffix = file_path.suffix.lower()
-    return MAPPING[suffix]
+    return MAPPING[suffix].from_file(file_path)

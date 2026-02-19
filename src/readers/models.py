@@ -37,6 +37,7 @@ class FitResults:
     overall: Mapping[str, float] = field(default_factory=dict)
     production: Mapping[str, float] = field(default_factory=dict)
     injection: Mapping[str, float] = field(default_factory=dict)
+    data_frame: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 class TimeFilter(BaseModel):
@@ -75,7 +76,7 @@ class WellDataFilter(BaseModel):
 
 
 type WellName = str
-type WellsFLowData = dict[WellName, FlowData]
+type WellsFlowData = dict[WellName, FlowData]
 type WellsFitResults = dict[WellName, FitResults]
 type MetricFn = Callable[
     [npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.bool_]],
