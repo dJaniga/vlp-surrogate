@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 from typing import ClassVar, Mapping, Type
@@ -9,7 +10,7 @@ import pandas as pd
 import pandera.pandas as pa
 from resdata.summary import Summary
 
-from readers.metrics import rmse, mae
+from readers.base import ReaderInterface
 from readers.models import (
     WellsFLowData,
     MetricFn,
@@ -18,12 +19,14 @@ from readers.models import (
     InjectionFlowData,
     WellsFitResults,
     FitResults,
+    WellDataFilter,
 )
+from toolbox.fit_metrics import rmse, mae
 
 logger = logging.getLogger(__name__)
 
 
-class EclipseReader:
+class EclipseReader(ReaderInterface):
     PRODUCTION_HEADER = ["WGPRH", "WTHPH", "WWGRH", "WOGRH", "WBHP"]
 
     INJECTION_HEADER = ["WGIRH", "WTHPH", "WBHP"]
@@ -48,7 +51,11 @@ class EclipseReader:
     _METRICS: ClassVar[dict[str, MetricFn]] = {}
 
     @classmethod
-    def read_wells_flow_data(cls, ecl_smr_file_path: str | Path) -> WellsFLowData:
+    def read_wells_flow_data(
+        cls,
+        ecl_smr_file_path: str | Path,
+        well_data_filter: WellDataFilter | None = None,
+    ) -> WellsFLowData:
         """Read an ECL summary file and return per-well training datasets for VLP."""
         summary, all_wells_name = cls._load_summary_and_wells_name(ecl_smr_file_path)
 
@@ -57,35 +64,59 @@ class EclipseReader:
         n_empty = 0
 
         results: WellsFLowData = {}
-        for well_name in all_wells_name:
-            logger.debug("Reading flow data for well=%s", well_name)
-            production = cls._read_production_data(summary, well_name)
-            injection = cls._read_injection_data(summary, well_name)
+
+        wells_filter = well_data_filter.wells if well_data_filter else None
+
+        time_filter = well_data_filter.time if well_data_filter else None
+        time_from = time_filter.from_T if time_filter else None
+        time_to = time_filter.to_T if time_filter else None
+
+        wells_to_read = all_wells_name if wells_filter is None else wells_filter
+
+        logger.info("Extracting flow data", extra={"Wells to read": wells_to_read})
+        if time_filter:
+            logger.info("Time filter", extra={"From": time_from, "To": time_to})
+
+        for well_name in wells_to_read:
+            logger.debug("Preparing flow data", extra={"Well name": well_name})
+            production = cls._read_production_data(
+                summary, well_name, time_from, time_to
+            )
+            injection = cls._read_injection_data(summary, well_name, time_from, time_to)
 
             if production is None:
-                logger.debug("Well=%s: production data unavailable", well_name)
+                logger.warning(
+                    "Production data unavailable",
+                    extra={"Well": well_name, "Label": "production"},
+                )
             else:
                 n_prod += 1
 
             if injection is None:
-                logger.debug("Well=%s: injection data unavailable", well_name)
+                logger.warning(
+                    "Injection data unavailable",
+                    extra={"Well": well_name, "Label": "injection"},
+                )
             else:
                 n_inj += 1
 
             if production is None and injection is None:
                 n_empty += 1
-                logger.info(
-                    "Well=%s: no production/injection data after filtering", well_name
+                logger.warning(
+                    "Both production and injection data unavailable",
+                    extra={"Well": well_name},
                 )
 
             results[well_name] = FlowData(production=production, injection=injection)
 
         logger.info(
-            "Prepared flow data: wells=%d, prod=%d, inj=%d, empty=%d",
-            len(all_wells_name),
-            n_prod,
-            n_inj,
-            n_empty,
+            "Prepared flow data",
+            extra={
+                "Wells read": len(results),
+                "Production": n_prod,
+                "Injection": n_inj,
+                "Empty": n_empty,
+            },
         )
         return results
 
@@ -170,23 +201,25 @@ class EclipseReader:
         cls, ecl_smr_file_path: str | Path
     ) -> tuple[Summary, list[str]]:
         path = str(ecl_smr_file_path)
-        logger.info(
-            "Reading ECL summary file path=%s join_string=%s", path, cls.JOIN_STRING
-        )
+        logger.info("Loading summary file", extra={"Path": path})
         try:
-            summary = Summary(path, join_string=cls.JOIN_STRING)
+            summary = Summary(path, join_string=cls.JOIN_STRING, lazy_load=True)
             wells = list(summary.wells())
         except Exception:
             logger.exception("Failed to read ECL summary file path=%s", path)
             raise
 
-        logger.info("Summary loaded successfully: wells=%d", len(wells))
-        logger.debug("Wells=%s", wells)
+        logger.info("Loaded summary file", extra={"All wells read from summary": wells})
+
         return summary, wells
 
     @classmethod
     def _read_production_data(
-        cls, summary: Summary, well_name: str
+        cls,
+        summary: Summary,
+        well_name: str,
+        time_from: datetime | None = None,
+        time_to: datetime | None = None,
     ) -> pd.DataFrame | None:
         return cls._read_flow_data(
             summary=summary,
@@ -195,11 +228,17 @@ class EclipseReader:
             rename_map=cls.PRODUCTION_RENAME_MAP,
             model=ProductionFlowData,
             label="production",
+            time_from=time_from,
+            time_to=time_to,
         )
 
     @classmethod
     def _read_injection_data(
-        cls, summary: Summary, well_name: str
+        cls,
+        summary: Summary,
+        well_name: str,
+        time_from: datetime | None = None,
+        time_to: datetime | None = None,
     ) -> pd.DataFrame | None:
         return cls._read_flow_data(
             summary=summary,
@@ -208,6 +247,8 @@ class EclipseReader:
             rename_map=cls.INJECTION_RENAME_MAP,
             model=InjectionFlowData,
             label="injection",
+            time_from=time_from,
+            time_to=time_to,
         )
 
     @classmethod
@@ -220,32 +261,71 @@ class EclipseReader:
         rename_map: dict[str, str],
         model: Type[pa.DataFrameModel],
         label: str,
+        time_from: datetime | None = None,
+        time_to: datetime | None = None,
     ) -> pd.DataFrame | None:
         column_keys = [f"{h}{cls.JOIN_STRING}{well_name}" for h in header]
 
         df = summary.pandas_frame(column_keys=column_keys)
+
         logger.debug(
-            "Well=%s (%s): loaded frame rows=%d cols=%d",
-            well_name,
-            label,
-            len(df),
-            len(df.columns),
+            "Loaded frame",
+            extra={"Well name": well_name, "Label": label, "Rows": len(df)},
         )
 
+        # 1. Keep only rows with non-negative values
         positive_value_mask = (df[column_keys] >= 0).all(axis=1)
-        df_required = df.loc[positive_value_mask].reset_index(names="T")
+        df_required = df.loc[positive_value_mask]
         logger.debug(
-            "Well=%s (%s): positive filter kept=%d/%d",
-            well_name,
-            label,
-            len(df_required),
-            len(df),
+            "Positive filter",
+            extra={
+                "Well name": well_name,
+                "Label": label,
+                "Rows before": len(df),
+                "Rows after": len(df_required),
+            },
         )
         if df_required.empty:
-            logger.info("Well=%s (%s): no rows after positive filter", well_name, label)
+            logger.warning(
+                "No rows after positive filter",
+                extra={"Well name": well_name, "Label": label},
+            )
             return None
 
-        # Convert "ECLKEY:WELL" -> "CANONICAL"
+        # 2. Apply time filtering on index (DatetimeIndex assumed)
+        if time_from is not None or time_to is not None:
+            time_mask = pd.Series(True, index=df_required.index)
+
+            if time_from is not None:
+                time_mask &= df_required.index >= time_from
+
+            if time_to is not None:
+                time_mask &= df_required.index <= time_to
+
+            before_time_filter = len(df_required)
+            df_required = df_required.loc[time_mask]
+
+            logger.debug(
+                "Time filter",
+                extra={
+                    "Well name": well_name,
+                    "Label": label,
+                    "Rows before": before_time_filter,
+                    "Rows after": len(df_required),
+                },
+            )
+
+            if df_required.empty:
+                logger.warning(
+                    "No rows after time filter",
+                    extra={"Well name": well_name, "Label": label},
+                )
+                return None
+
+        # 3. Move index to column "T"
+        df_required = df_required.reset_index(names="T")
+
+        # 4. Convert "ECLKEY:WELL" -> canonical names
         reverse_rename = {
             f"{v}{cls.JOIN_STRING}{well_name}": k for (k, v) in rename_map.items()
         }
@@ -255,11 +335,14 @@ class EclipseReader:
         try:
             validated = model.validate(vlp_df)
         except Exception:
-            logger.exception("Well=%s (%s): validation failed", well_name, label)
+            logger.exception(
+                "Validation failed", extra={"Well name": well_name, "Label": label}
+            )
             raise
 
         logger.debug(
-            "Well=%s (%s): validation ok rows=%d", well_name, label, len(vlp_df)
+            "Validation ok",
+            extra={"Well name": well_name, "Label": label, "Rows": len(vlp_df)},
         )
         return validated
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 
@@ -23,6 +24,13 @@ def export_VFP_table(
 
         for row in vfp_table.body:
             _write_row(f, row)
+
+
+def export_VFP_manifest(vfp_file_paths: Sequence[Path], output_file_path: Path) -> None:
+    with output_file_path.open("w", encoding="utf-8") as f:
+        for filepath in vfp_file_paths:
+            f.write("INCLUDE\n")
+            f.write(f"'{filepath.name}' /\n")
 
 
 def _write_row(file_obj, values: np.ndarray, float_fmt: str = "{:.6g}") -> None:

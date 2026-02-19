@@ -5,7 +5,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from modeling.base import VFPModel
+from toolbox import all_fit_metrics
+from vfp.modeling.base import VFPModel
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,15 @@ class LinearRegressionModel(VFPModel):
         design_matrix = np.column_stack([np.ones(features.shape[0]), features])
         coefficients, *_ = np.linalg.lstsq(design_matrix, targets, rcond=None)
         self.coefficients = coefficients
+        # Predictions
+        y_pred = design_matrix @ coefficients
+
+        fit_metrics = all_fit_metrics(targets, y_pred)
+
+        logger.info(
+            "Fit diagnostics",
+            extra={"fit_metrics": fit_metrics},
+        )
         return self
 
     def predict(self, features: np.ndarray) -> np.ndarray:

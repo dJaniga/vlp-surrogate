@@ -1,3 +1,5 @@
-from readers.eclipse import EclipseReader
+from readers.api import get_reader_by_file_suffix
+from readers.models import WellDataFilter
 
-__all__ = ["EclipseReader"]
+
+__all__ = ["get_reader_by_file_suffix", "WellDataFilter"]

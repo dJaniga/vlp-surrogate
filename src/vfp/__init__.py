@@ -1,3 +1,4 @@
-from vfp.pipeline import VFPPROD_CONFIG, VFPINJ_CONFIG, run_vfp_pipeline
+from vfp.api import run_pipeline
 
-__all__ = ["VFPPROD_CONFIG", "VFPINJ_CONFIG", "run_vfp_pipeline"]
+
+__all__ = ["run_pipeline"]

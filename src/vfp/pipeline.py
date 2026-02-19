@@ -5,9 +5,9 @@ from typing import Sequence
 
 import pandas as pd
 
-from modeling import VFPModel
 from vfp.builder import prepare_table_body, VFPTable, VFPType
 from vfp.export import export_VFP_table
+from vfp.modeling import VFPModel
 from vfp.preprocess import (
     clean_data,
     get_training_data,
@@ -24,7 +24,6 @@ class VFPPipelineConfig:
     required_keys: Sequence[str]
     feature_keys: Sequence[str]
     target_keys: Sequence[str]
-    granularity: int = 5
 
 
 VFPPROD_CONFIG = VFPPipelineConfig(
@@ -44,13 +43,14 @@ VFPINJ_CONFIG = VFPPipelineConfig(
 )
 
 
-def run_vfp_pipeline(
+def vfp_pipeline(
     output_file_path: Path,
     well_data: pd.DataFrame,
     reference_model: VFPModel,
     vfp_table_id: int,
     bhp_depth: float,
     config: VFPPipelineConfig,
+    vfp_table_granularity: int,
 ) -> VFPTable | None:
     table = _pipeline(
         reference_model=reference_model,
@@ -58,7 +58,7 @@ def run_vfp_pipeline(
         required_valid_operation_condition_keys=config.required_keys,
         features_keys=config.feature_keys,
         targets_keys=config.target_keys,
-        vfp_table_granularity=config.granularity,
+        vfp_table_granularity=vfp_table_granularity,
         vfp_table_header_template=config.header_template,
         vfp_table_id=vfp_table_id,
         bhp_depth=bhp_depth,

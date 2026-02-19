@@ -1,6 +1,7 @@
 import glob
 import json
 import logging
+
 import os
 
 from pydantic import Json
@@ -71,7 +72,7 @@ def _collect_vfp_data(folder_path: str) -> Json:
     return results
 
 
-def vfp_well_data_collector(folder_path: str, output_json_path: str) -> None:
+def export_vfp_details_data_to_json(folder_path: str, output_json_path: str) -> None:
     logger.info("Collecting VFP data from %s", folder_path)
     data = _collect_vfp_data(folder_path)
 

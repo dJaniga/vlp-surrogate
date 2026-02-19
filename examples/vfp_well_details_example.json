@@ -1,0 +1,22 @@
+{
+  "W1": {
+    "VFPPROD": {
+      "table number": 6,
+      "bhp depth": 900
+    },
+    "VFPINJ": {
+      "table number": 6,
+      "bhp depth": 816.3
+    }
+  },
+  "W2": {
+    "VFPPROD": {
+      "table number": 7,
+      "bhp depth": 816.3
+    },
+    "VFPINJ": {
+      "table number": 7,
+      "bhp depth": 900
+    }
+  }
+}
