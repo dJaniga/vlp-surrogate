@@ -6,7 +6,9 @@ requires-python = ">=3.14,<3.15"
 dependencies = [
     "mypy>=1.19.1",
     "numpy>=2.4.2",
+    "pandas-stubs~=3.0.0",
     "pandera>=0.29.0",
+    "pydantic>=2.12.5",
     "resdata>=6.2.4",
     "ruff>=0.14.14",
 ]
@@ -16,3 +18,21 @@ mypy_path = "src"
 files = ["src"]
 ignore_missing_imports = true
 allow_untyped_decorators = true
+
+[tool.vlp_surrogate.logging]
+version = 1
+disable_existing_loggers = false
+
+[tool.vlp_surrogate.logging.formatters.standard]
+format = "%(asctime)s- %(module)-30s %(lineno)-4d - %(levelname)-8s - %(message)s%(extra)s"
+"()" = "toolbox.logger.ExtraFormatter"
+
+[tool.vlp_surrogate.logging.handlers.console]
+class = "logging.StreamHandler"
+formatter = "standard"
+level = "DEBUG"
+stream = "ext://sys.stdout"
+
+[tool.vlp_surrogate.logging.root]
+level = "DEBUG"
+handlers = ["console"]

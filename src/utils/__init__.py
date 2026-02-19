@@ -1,4 +1,3 @@
+from utils.tools import export_vfp_details_data_to_json
 
-__all__ = [
-    "vfp_well_data_collector"
-]
+__all__ = ["export_vfp_details_data_to_json"]
