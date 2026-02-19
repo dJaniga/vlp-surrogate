@@ -360,8 +360,9 @@ class EclipseReader(ReaderInterface):
 
         out = pd.DataFrame(
             {
-                "actual": y_actual,
-                "predicted": y_pred,
+                "T": df.index,
+                "measured": y_actual,
+                "simulated": y_pred,
                 "production_mask": mask_prod,
                 "injection_mask": mask_inj,
             },
