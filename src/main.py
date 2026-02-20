@@ -4,6 +4,7 @@ from pathlib import Path
 
 from toolbox import setup_logging
 from vfp import run_pipeline, run_evaluator
+from vfp.api import create_model
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +33,64 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     parser_pipeline.add_argument(
-        "--model-name",
+        "--model",
         type=str,
         help="VFP surrogate model type",
         required=True,
-        choices=["linear"],
+        choices=["linear", "symbolic"],
+        default="linear",
     )
+
+    # -----------------------------------------------------------------------------
+    # Symbolic model parameters
+    # -----------------------------------------------------------------------------
+
+    parser_pipeline.add_argument(
+        "--ga-generations", type=int, default=80, help="GA generations."
+    )
+    parser_pipeline.add_argument(
+        "--ga-population", type=int, default=60, help="GA population size."
+    )
+
+    parser_pipeline.add_argument(
+        "--n-islands",
+        type=int,
+        default=4,
+        help="Number of islands for symbolic island-model GP.",
+    )
+    parser_pipeline.add_argument(
+        "--migration-interval",
+        type=int,
+        default=5,
+        help="Generations between island migrations.",
+    )
+    parser_pipeline.add_argument(
+        "--migration-size",
+        type=int,
+        default=3,
+        help="Number of individuals migrated between islands.",
+    )
+    parser_pipeline.add_argument(
+        "--simplify-interval",
+        type=int,
+        default=5,
+        help="Generations between SymPy simplification passes (0 to disable).",
+    )
+    parser_pipeline.add_argument(
+        "--parsimony-coefficient",
+        type=float,
+        default=0.001,
+        help="Parsimony pressure coefficient (penalty per tree node).",
+    )
+    parser_pipeline.add_argument(
+        "--max-tree-height",
+        type=int,
+        default=6,
+        help="Maximum GP tree height.",
+    )
+
+    parser_pipeline.add_argument("--seed", type=int, default=None, help="Random seed.")
+
     parser_pipeline.add_argument(
         "--output-folder", type=Path, help="Path to output folder", required=True
     )
@@ -46,7 +99,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path to well data filter file [*.json]",
     )
-    parser_pipeline.add_argument("--table-granularity", type=int, default=5)
+    parser_pipeline.add_argument(
+        "--table-granularity", type=int, default=5, help="VFP records n-size"
+    )
 
     parser_evaluator = subparsers.add_parser(
         "evaluator",
@@ -77,10 +132,32 @@ def main():
 
     if parsed_args.mode == "pipeline":
         logger.info("Running in pipeline mode", extra={"Parsed args": parsed_args})
+
+        if parsed_args.model == "symbolic":
+            logger.info("Using symbolic model", extra={"model": "symbolic"})
+            model = create_model(
+                "symbolic",
+                generations=parsed_args.ga_generations,
+                population_size=parsed_args.ga_population,
+                seed=parsed_args.seed,
+                n_islands=parsed_args.n_islands,
+                migration_interval=parsed_args.migration_interval,
+                migration_size=parsed_args.migration_size,
+                simplify_interval=parsed_args.simplify_interval,
+                parsimony_coefficient=parsed_args.parsimony_coefficient,
+                max_tree_height=parsed_args.max_tree_height,
+            )
+        elif parsed_args.model == "linear":
+            logger.info("Using linear model", extra={"model": "linear"})
+            model = create_model("linear")
+
+        else:
+            raise ValueError(f"Unsupported model: {parsed_args.model}")
+
         run_pipeline(
             source_file_path=parsed_args.input_file,
             vfp_details_file_path=parsed_args.vfp_details_file,
-            model_name=parsed_args.model_name,
+            surrogate_model=model,
             output_folder_path=parsed_args.output_folder,
             well_data_filter_path=parsed_args.well_data_filter_file,
             table_granularity=parsed_args.table_granularity,

@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Data-driven estimation of vertical lift performance (VLP) curves for accurate tubing head pressure (THP) simulation."
 requires-python = ">=3.14,<3.15"
 dependencies = [
+    "deap>=1.4.3",
     "mypy>=1.19.1",
     "numpy>=2.4.2",
     "pandas-stubs~=3.0.0",
@@ -11,6 +12,9 @@ dependencies = [
     "pydantic>=2.12.5",
     "resdata>=6.2.4",
     "ruff>=0.14.14",
+    "scipy-stubs~=1.17.0",
+    "sympy>=1.14.0",
+    "tqdm>=4.67.3",
 ]
 
 [tool.mypy]
