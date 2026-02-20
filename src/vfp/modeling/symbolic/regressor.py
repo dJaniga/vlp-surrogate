@@ -62,14 +62,16 @@ class SymbolicRegressor(VFPModel):
         """
         if fit:
             self._feature_mean = features.mean(axis=0)
-            self._feature_std = features.std(axis=0)
+            _std = features.std(axis=0)
             # Clamp zero-variance features to avoid division by zero
-            self._feature_std[self._feature_std < 1e-12] = 1.0
+            _std[_std < 1e-12] = 1.0
+            self._feature_std = _std
         assert self._feature_mean is not None and self._feature_std is not None
         return (features - self._feature_mean) / self._feature_std
 
     def _standardize_targets(self, targets: np.ndarray) -> np.ndarray:
         """Standardize targets to zero-mean, unit-variance and store params."""
+        targets = np.asarray(targets).flatten()
         self._target_mean = float(targets.mean())
         self._target_std = float(targets.std())
         if self._target_std < 1e-12:

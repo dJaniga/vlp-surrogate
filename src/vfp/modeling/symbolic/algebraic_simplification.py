@@ -247,6 +247,10 @@ def _simplify_individual(
         )
         if new_fitness[0] >= _PENALTY_FITNESS[0]:
             return False
+
+        # Only accept if the simplified tree does not significantly degrade MSE
+        if new_fitness[0] > individual.fitness.values[0] + 1e-6:
+            return False
     except Exception:
         return False
 

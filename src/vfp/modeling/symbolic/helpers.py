@@ -142,25 +142,6 @@ def vectorised_evaluate(func: object, features: np.ndarray) -> np.ndarray:
         return _safe_evaluate_rows(func, features)
 
 
-def ectorised_evaluate(func: object, features: np.ndarray) -> np.ndarray:
-    """Evaluate a compiled GP function over all feature rows."""
-    try:
-        columns = [features[:, i] for i in range(features.shape[1])]
-        result = func(*columns)  # type: ignore[operator]
-        if result is None:
-            return _safe_evaluate_rows(func, features)
-        arr = np.asarray(result, dtype=float)
-        if arr.shape != (features.shape[0],):
-            # scalar result (constant tree) -- broadcast
-            arr = np.full(features.shape[0], float(arr), dtype=float)
-        if np.all(np.isfinite(arr)):
-            return arr
-        # some non-finite values, fall back
-        return _safe_evaluate_rows(func, features)
-    except Exception:
-        return _safe_evaluate_rows(func, features)
-
-
 def _safe_evaluate_rows(func: object, features: np.ndarray) -> np.ndarray:
     """Row-by-row fallback with NaN for failures."""
     results = np.empty(features.shape[0], dtype=float)
@@ -171,7 +152,7 @@ def _safe_evaluate_rows(func: object, features: np.ndarray) -> np.ndarray:
                 results[i] = np.nan
             else:
                 results[i] = float(value)
-        except TypeError, ValueError, ZeroDivisionError, OverflowError:
+        except (TypeError, ValueError, ZeroDivisionError, OverflowError):
             results[i] = np.nan
     return results
 
