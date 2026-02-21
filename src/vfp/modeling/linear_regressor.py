@@ -29,8 +29,8 @@ class LinearRegressionModel(VFPModel):
         coefficients, *_ = np.linalg.lstsq(design_matrix, targets, rcond=None)
         self.coefficients = coefficients
         # Predictions
-        y_pred = design_matrix @ coefficients
 
+        y_pred = self.predict(features)
         fit_metrics = all_fit_metrics(targets, y_pred)
 
         logger.info(

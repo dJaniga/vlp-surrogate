@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import logging
+from copy import deepcopy
 from dataclasses import dataclass, field
 
 import numpy as np
-from tqdm import tqdm
 from deap import base, gp, tools
+from tqdm import tqdm
 
+from toolbox import all_fit_metrics
 from vfp.modeling.base import VFPModel
-from .primitives import build_primitive_set
-from .toolbox import build_toolbox
 from .algebraic_simplification import simplify_island
 from .helpers import (
     build_seed_individuals,
@@ -19,6 +18,8 @@ from .helpers import (
     migrate,
     vectorised_evaluate,
 )
+from .primitives import build_primitive_set
+from .toolbox import build_toolbox
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +245,14 @@ class SymbolicRegressor(VFPModel):
                 "expression": str(self.best_individual_),
             },
         )
+
+        y_pred = self.predict(features)
+        fit_metrics = all_fit_metrics(targets.flatten(), y_pred.flatten())
+        logger.info(
+            "Fit diagnostics",
+            extra={"fit_metrics": fit_metrics},
+        )
+
         return self
 
     def predict(self, features: np.ndarray) -> np.ndarray:
