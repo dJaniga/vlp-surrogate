@@ -3,7 +3,6 @@ import pandas as pd
 
 
 def _prepare_record_indexes(records_config: pd.DataFrame) -> np.ndarray:
-
     unique_counts_without_flo = records_config.drop(columns=["FLO"]).nunique().to_list()
 
     grids = np.meshgrid(

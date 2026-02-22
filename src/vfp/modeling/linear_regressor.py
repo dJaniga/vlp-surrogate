@@ -17,7 +17,12 @@ class LinearRegressionModel(VFPModel):
 
     coefficients: np.ndarray | None = None
 
-    def fit(self, features: np.ndarray, targets: np.ndarray, features_name: tuple[str,...] | None = None) -> LinearRegressionModel:
+    def fit(
+        self,
+        features: np.ndarray,
+        targets: np.ndarray,
+        features_name: tuple[str, ...] | None = None,
+    ) -> LinearRegressionModel:
         logger.info(
             "Fitting linear regression",
             extra={
@@ -42,7 +47,6 @@ class LinearRegressionModel(VFPModel):
             features_name_with_intercept = ("Intercept",) + features_name
             coefficients_dict = dict(zip(features_name_with_intercept, coefficients))
             logger.info("Coefficients", extra={"coefficients": coefficients_dict})
-
 
         return self
 

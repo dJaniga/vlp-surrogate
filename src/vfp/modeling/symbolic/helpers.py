@@ -15,8 +15,8 @@ _PENALTY_FITNESS = (1e18, 1e18)
 
 
 def build_seed_individuals(
-        pset: gp.PrimitiveSet,
-        n_features: int,
+    pset: gp.PrimitiveSet,
+    n_features: int,
 ) -> list[gp.PrimitiveTree]:
     """Create hand-crafted seed individuals that use multiple features.
 
@@ -25,15 +25,11 @@ def build_seed_individuals(
     """
     # Look up primitives and terminals from the pset - optimize dictionary building
     prim: dict[str, gp.Primitive] = {
-        p.name: p
-        for prims in pset.primitives.values()
-        for p in prims
+        p.name: p for prims in pset.primitives.values() for p in prims
     }
 
     term: dict[str, gp.Terminal] = {
-        t.name: t
-        for terms in pset.terminals.values()
-        for t in terms
+        t.name: t for terms in pset.terminals.values() for t in terms
     }
 
     # Cache frequently used primitives
@@ -166,7 +162,12 @@ def _safe_evaluate_rows(func: object, features: np.ndarray) -> np.ndarray:
                 results[i] = np.nan
             else:
                 results[i] = float(value)
-        except (TypeError, ValueError, ZeroDivisionError, OverflowError):  # Fixed: parentheses for tuple
+        except (
+            TypeError,
+            ValueError,
+            ZeroDivisionError,
+            OverflowError,
+        ):  # Fixed: parentheses for tuple
             results[i] = np.nan
     return results
 
@@ -179,10 +180,10 @@ def make_constant_terminal(value: float) -> gp.Terminal:
 
 
 def optimize_constants(
-        individual: gp.PrimitiveTree,
-        pset: gp.PrimitiveSet,
-        features: np.ndarray,
-        targets: np.ndarray,
+    individual: gp.PrimitiveTree,
+    pset: gp.PrimitiveSet,
+    features: np.ndarray,
+    targets: np.ndarray,
 ) -> None:
     """Fine-tune ephemeral constants in the individual via Nelder-Mead."""
     indices = [
@@ -199,7 +200,9 @@ def optimize_constants(
     targets_cached = targets  # Avoid repeated attribute access
 
     def objective(constants: np.ndarray) -> float:
-        for idx, value in zip(indices, constants, strict=False):  # strict=False is faster
+        for idx, value in zip(
+            indices, constants, strict=False
+        ):  # strict=False is faster
             individual[idx] = make_constant_terminal(value)
         func = gp.compile(individual, pset)
         preds = vectorised_evaluate(func, features)
@@ -259,9 +262,9 @@ def evaluate_individual(
 
 
 def migrate(
-        islands: list[list[gp.PrimitiveTree]],
-        migration_size: int,
-        rng: np.random.Generator,
+    islands: list[list[gp.PrimitiveTree]],
+    migration_size: int,
+    rng: np.random.Generator,
 ) -> None:
     """Ring-topology migration: each island sends its best to the next island.
 

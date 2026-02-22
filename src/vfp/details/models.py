@@ -45,7 +45,6 @@ class VFPDetails(RootModel[Dict[str, StreamVFP]]):
 
     @model_validator(mode="after")
     def table_number_must_be_unique(self) -> dict[str, StreamVFP]:
-
         table_numbers_vfpprod = set()
         table_numbers_vfpinj = set()
 
