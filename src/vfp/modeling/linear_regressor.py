@@ -37,6 +37,13 @@ class LinearRegressionModel(VFPModel):
             "Fit diagnostics",
             extra={"fit_metrics": fit_metrics},
         )
+
+        if features_name:
+            features_name_with_intercept = ("Intercept",) + features_name
+            coefficients_dict = dict(zip(features_name_with_intercept, coefficients))
+            logger.info("Coefficients", extra={"coefficients": coefficients_dict})
+
+
         return self
 
     def predict(self, features: np.ndarray) -> np.ndarray:

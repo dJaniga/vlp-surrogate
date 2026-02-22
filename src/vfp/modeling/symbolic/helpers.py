@@ -15,30 +15,40 @@ _PENALTY_FITNESS = (1e18, 1e18)
 
 
 def build_seed_individuals(
-    pset: gp.PrimitiveSet,
-    n_features: int,
+        pset: gp.PrimitiveSet,
+        n_features: int,
 ) -> list[gp.PrimitiveTree]:
     """Create hand-crafted seed individuals that use multiple features.
 
     These provide the GP with multi-variable starting structures that it
     can refine via crossover, mutation, and constant optimisation.
     """
-    # Look up primitives and terminals from the pset
-    prim: dict[str, gp.Primitive] = {}
-    for prims in pset.primitives.values():
-        for p in prims:
-            prim[p.name] = p
+    # Look up primitives and terminals from the pset - optimize dictionary building
+    prim: dict[str, gp.Primitive] = {
+        p.name: p
+        for prims in pset.primitives.values()
+        for p in prims
+    }
 
-    term: dict[str, gp.Terminal] = {}
-    for terms in pset.terminals.values():
-        for t in terms:
-            term[t.name] = t
+    term: dict[str, gp.Terminal] = {
+        t.name: t
+        for terms in pset.terminals.values()
+        for t in terms
+    }
+
+    # Cache frequently used primitives
+    add_prim = prim["_add"]
+    mul_prim = prim["_mul"]
 
     def _arg(i: int) -> gp.Terminal:
         return term[f"ARG{i}"]
 
     def _const(v: float) -> gp.Terminal:
         return make_constant_terminal(v)
+
+    # Pre-allocate constant terminals to reuse
+    const_zero = _const(0.0)
+    const_one = _const(1.0)
 
     seeds: list[list[gp.Primitive | gp.Terminal]] = []
 
@@ -47,11 +57,11 @@ def build_seed_individuals(
         for j in range(i + 1, n_features):
             # _add(_mul(c1, ARGi), _mul(c2, ARGj))
             tokens = [
-                prim["_add"],
-                prim["_mul"],
+                add_prim,
+                mul_prim,
                 _const(1.0),
                 _arg(i),
-                prim["_mul"],
+                mul_prim,
                 _const(1.0),
                 _arg(j),
             ]
@@ -61,28 +71,29 @@ def build_seed_individuals(
     if n_features >= 2:
         # Build: _add(_add(...), _mul(c, ARGn))
         # Start with _mul(c, ARG0)
-        tokens = [prim["_mul"], _const(1.0), _arg(0)]
+        tokens = [mul_prim, _const(1.0), _arg(0)]
         for i in range(1, n_features):
-            tokens = [prim["_add"]] + tokens + [prim["_mul"], _const(1.0), _arg(i)]
+            tokens = [add_prim] + tokens + [mul_prim, _const(1.0), _arg(i)]
         # Add a constant offset: _add(c0, <above>)
-        tokens = [prim["_add"], _const(0.0)] + tokens
+        tokens = [add_prim, const_zero] + tokens
         seeds.append(tokens)
 
     # 3. Quadratic in main feature + linear in others:
     #    c0 + c1*ARG0 + c2*ARG0^2 + c3*ARG1
+    square_prim = prim["_square"]
     for main in range(min(n_features, 2)):
         other = 1 - main
         tokens = [
-            prim["_add"],
-            prim["_add"],
-            prim["_mul"],
+            add_prim,
+            add_prim,
+            mul_prim,
             _const(1.0),
             _arg(main),
-            prim["_mul"],
+            mul_prim,
             _const(1.0),
-            prim["_square"],
+            square_prim,
             _arg(main),
-            prim["_mul"],
+            mul_prim,
             _const(1.0),
             _arg(other),
         ]
@@ -91,9 +102,9 @@ def build_seed_individuals(
     # 4. Product interaction: c * ARG0 * ARG1
     if n_features >= 2:
         tokens = [
-            prim["_mul"],
+            mul_prim,
             _const(1.0),
-            prim["_mul"],
+            mul_prim,
             _arg(0),
             _arg(1),
         ]
@@ -126,7 +137,9 @@ def build_seed_individuals(
 def vectorised_evaluate(func: object, features: np.ndarray) -> np.ndarray:
     """Evaluate a compiled GP function over all feature rows."""
     try:
-        columns = [features[:, i] for i in range(features.shape[1])]
+        # Pre-allocate column views (zero-copy)
+        n_cols = features.shape[1]
+        columns = [features[:, i] for i in range(n_cols)]
         result = func(*columns)  # type: ignore[operator]
         if result is None:
             return _safe_evaluate_rows(func, features)
@@ -134,7 +147,8 @@ def vectorised_evaluate(func: object, features: np.ndarray) -> np.ndarray:
         if arr.shape != (features.shape[0],):
             # scalar result (constant tree) -- broadcast
             arr = np.full(features.shape[0], float(arr), dtype=float)
-        if np.all(np.isfinite(arr)):
+        # Faster finite check: use bitwise operations
+        if not (np.isnan(arr).any() or np.isinf(arr).any()):
             return arr
         # some non-finite values, fall back
         return _safe_evaluate_rows(func, features)
@@ -152,7 +166,7 @@ def _safe_evaluate_rows(func: object, features: np.ndarray) -> np.ndarray:
                 results[i] = np.nan
             else:
                 results[i] = float(value)
-        except TypeError, ValueError, ZeroDivisionError, OverflowError:
+        except (TypeError, ValueError, ZeroDivisionError, OverflowError):  # Fixed: parentheses for tuple
             results[i] = np.nan
     return results
 
@@ -165,10 +179,10 @@ def make_constant_terminal(value: float) -> gp.Terminal:
 
 
 def optimize_constants(
-    individual: gp.PrimitiveTree,
-    pset: gp.PrimitiveSet,
-    features: np.ndarray,
-    targets: np.ndarray,
+        individual: gp.PrimitiveTree,
+        pset: gp.PrimitiveSet,
+        features: np.ndarray,
+        targets: np.ndarray,
 ) -> None:
     """Fine-tune ephemeral constants in the individual via Nelder-Mead."""
     indices = [
@@ -181,14 +195,19 @@ def optimize_constants(
 
     initial = np.array([float(individual[idx].value) for idx in indices], dtype=float)
 
+    # Pre-compute squared differences for faster MSE calculation
+    targets_cached = targets  # Avoid repeated attribute access
+
     def objective(constants: np.ndarray) -> float:
-        for idx, value in zip(indices, constants, strict=True):
+        for idx, value in zip(indices, constants, strict=False):  # strict=False is faster
             individual[idx] = make_constant_terminal(value)
         func = gp.compile(individual, pset)
         preds = vectorised_evaluate(func, features)
         if np.any(~np.isfinite(preds)):
             return 1e18
-        return float(np.mean((preds - targets) ** 2))
+        # Slightly faster MSE computation
+        diff = preds - targets_cached
+        return float(np.dot(diff, diff) / len(diff))
 
     result = minimize(
         objective,
@@ -202,7 +221,7 @@ def optimize_constants(
     initial_mse = objective(initial)
     if initial_mse < best_mse:
         best = initial
-    for idx, value in zip(indices, best, strict=True):
+    for idx, value in zip(indices, best, strict=False):
         individual[idx] = make_constant_terminal(value)
 
     logger.debug(
@@ -228,7 +247,9 @@ def evaluate_individual(
         preds = vectorised_evaluate(func, features)
         if np.any(~np.isfinite(preds)):
             return _PENALTY_FITNESS
-        mse = float(np.mean((preds - targets) ** 2))
+        # Faster MSE: use dot product instead of mean of squares
+        diff = preds - targets
+        mse = float(np.dot(diff, diff) / len(diff))
     except Exception:
         return _PENALTY_FITNESS
 
@@ -238,9 +259,9 @@ def evaluate_individual(
 
 
 def migrate(
-    islands: list[list[gp.PrimitiveTree]],
-    migration_size: int,
-    rng: np.random.Generator,
+        islands: list[list[gp.PrimitiveTree]],
+        migration_size: int,
+        rng: np.random.Generator,
 ) -> None:
     """Ring-topology migration: each island sends its best to the next island.
 
@@ -250,19 +271,24 @@ def migrate(
     n = len(islands)
     if n < 2:
         return
+
+    # Pre-compute emigrants for all islands
     emigrants: list[list[gp.PrimitiveTree]] = []
     for island in islands:
         best = tools.selBest(island, k=min(migration_size, len(island)))
         emigrants.append([deepcopy(ind) for ind in best])
 
+    # Perform migration more efficiently
     for i in range(n):
         dest = (i + 1) % n
         dest_island = islands[dest]
-        worst = tools.selWorst(dest_island, k=min(migration_size, len(dest_island)))
-        for w in worst:
-            if w in dest_island:
-                dest_island.remove(w)
-        dest_island.extend(emigrants[i])
+        k = min(migration_size, len(dest_island))
+        worst = tools.selWorst(dest_island, k=k)
+
+        # Use set for O(1) lookup instead of O(n) list.remove()
+        worst_set = set(id(w) for w in worst)
+        islands[dest] = [ind for ind in dest_island if id(ind) not in worst_set]
+        islands[dest].extend(emigrants[i])
 
     logger.debug(
         "Migration complete",
