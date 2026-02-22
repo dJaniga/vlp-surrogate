@@ -17,7 +17,12 @@ class LinearRegressionModel(VFPModel):
 
     coefficients: np.ndarray | None = None
 
-    def fit(self, features: np.ndarray, targets: np.ndarray) -> LinearRegressionModel:
+    def fit(
+        self,
+        features: np.ndarray,
+        targets: np.ndarray,
+        features_name: tuple[str, ...] | None = None,
+    ) -> LinearRegressionModel:
         logger.info(
             "Fitting linear regression",
             extra={
@@ -29,14 +34,20 @@ class LinearRegressionModel(VFPModel):
         coefficients, *_ = np.linalg.lstsq(design_matrix, targets, rcond=None)
         self.coefficients = coefficients
         # Predictions
-        y_pred = design_matrix @ coefficients
 
+        y_pred = self.predict(features)
         fit_metrics = all_fit_metrics(targets, y_pred)
 
         logger.info(
             "Fit diagnostics",
             extra={"fit_metrics": fit_metrics},
         )
+
+        if features_name:
+            features_name_with_intercept = ("Intercept",) + features_name
+            coefficients_dict = dict(zip(features_name_with_intercept, coefficients))
+            logger.info("Coefficients", extra={"coefficients": coefficients_dict})
+
         return self
 
     def predict(self, features: np.ndarray) -> np.ndarray:

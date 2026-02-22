@@ -2,33 +2,32 @@ import json
 import logging
 from collections.abc import Set
 from pathlib import Path
-from typing import Final
+from typing import Literal
 
 from readers import initialize_reader_from_path, WellDataFilter
 from vfp.details import VFPDetails
 from vfp.export import export_VFP_manifest
-from vfp.modeling import VFPModel, LinearRegressionModel
+from vfp.modeling import VFPModel, LinearRegressionModel, SymbolicRegressor
 from vfp.pipeline import vfp_pipeline, VFPPROD_CONFIG, VFPINJ_CONFIG
 
 logger = logging.getLogger(__name__)
 
+ModelName = Literal["linear", "symbolic"]
+
+
 # -----------------------------------------------------------------------------
-# Model registry
+# Surrogate model factory
 # -----------------------------------------------------------------------------
 
-_MODEL_REGISTRY: Final[dict[str, type[VFPModel]]] = {
-    "linear": LinearRegressionModel,
-}
 
-
-def _get_model_by_name(model_name: str) -> VFPModel:
-    try:
-        model_cls = _MODEL_REGISTRY[model_name]
-    except KeyError:
-        raise ValueError(f"Unsupported model name: {model_name}") from None
-
-    logger.info("Using VFP model", extra={"Model": model_name})
-    return model_cls()
+def create_model(name: ModelName, **kwargs) -> VFPModel:
+    """Factory for supported models (linear or ga)."""
+    logger.info("Creating model", extra={"model": name})
+    if name == "linear":
+        return LinearRegressionModel(**kwargs)
+    if name == "symbolic":
+        return SymbolicRegressor(**kwargs)
+    raise ValueError(f"Unsupported model name: {name}")
 
 
 # -----------------------------------------------------------------------------
@@ -172,7 +171,7 @@ def _process_well_stream(
 def run_pipeline(
     source_file_path: Path,
     vfp_details_file_path: Path,
-    model_name: str,
+    surrogate_model: VFPModel,
     output_folder_path: Path,
     well_data_filter_path: Path | None = None,
     table_granularity: int = 5,
@@ -188,7 +187,7 @@ def run_pipeline(
     wells_flow_data = reader.read_wells_flow_data(well_data_filter)
 
     wells_vfp_details = _read_vfp_details(vfp_details_file_path)
-    reference_model = _get_model_by_name(model_name)
+    reference_model = surrogate_model
 
     manifest_content: list[Path] = []
 

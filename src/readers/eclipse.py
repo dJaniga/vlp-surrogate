@@ -181,7 +181,6 @@ class EclipseReader(ReaderInterface):
         time_from: datetime | None,
         time_to: datetime | None,
     ) -> pd.DataFrame | None:
-
         column_keys = self._column_keys(header, well)
         logger.debug(
             "Reading flow data frame",
@@ -275,7 +274,6 @@ class EclipseReader(ReaderInterface):
         time_from: datetime | None,
         time_to: datetime | None,
     ) -> FitResults | None:
-
         fit_cols = {
             k: f"{v}{self.config.join_string}{well}"
             for k, v in self.config.fit_columns.items()
@@ -440,7 +438,6 @@ class EclipseReader(ReaderInterface):
         time_from: datetime | None,
         time_to: datetime | None,
     ) -> pd.DataFrame:
-
         if time_from is None and time_to is None:
             return df
 

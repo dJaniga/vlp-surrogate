@@ -6,6 +6,11 @@ import numpy as np
 
 
 class VFPModel(Protocol):
-    def fit(self, features: np.ndarray, targets: np.ndarray) -> VFPModel: ...
+    def fit(
+        self,
+        features: np.ndarray,
+        targets: np.ndarray,
+        features_name: tuple[str, ...] | None = None,
+    ) -> VFPModel: ...
 
     def predict(self, features: np.ndarray) -> np.ndarray: ...
