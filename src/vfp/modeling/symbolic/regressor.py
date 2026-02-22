@@ -83,7 +83,7 @@ class SymbolicRegressor(VFPModel):
         """Convert standardized predictions back to the original target scale."""
         return predictions * self._target_std + self._target_mean
 
-    def fit(self, features: np.ndarray, targets: np.ndarray) -> SymbolicRegressor:
+    def fit(self, features: np.ndarray, targets: np.ndarray, features_name: tuple[str,...] | None = None) -> SymbolicRegressor:
         rng = np.random.default_rng(self.seed)
         n_features = features.shape[1]
 
@@ -91,6 +91,8 @@ class SymbolicRegressor(VFPModel):
         targets_std = self._standardize_targets(targets)
 
         self._pset = build_primitive_set(n_features)
+        if features_name:
+            self._pset.renameArguments(**{f"ARG{idx}": name for idx, name in enumerate(features_name)})
         self._toolbox = build_toolbox(
             self._pset,
             rng=rng,

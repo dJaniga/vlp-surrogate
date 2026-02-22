@@ -1,7 +1,7 @@
 import math
 
-from deap import gp
 import numpy as np
+from deap import gp
 
 
 def _add(a: float, b: float) -> float:

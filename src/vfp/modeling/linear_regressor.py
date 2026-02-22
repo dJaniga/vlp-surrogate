@@ -17,7 +17,7 @@ class LinearRegressionModel(VFPModel):
 
     coefficients: np.ndarray | None = None
 
-    def fit(self, features: np.ndarray, targets: np.ndarray) -> LinearRegressionModel:
+    def fit(self, features: np.ndarray, targets: np.ndarray, features_name: tuple[str,...] | None = None) -> LinearRegressionModel:
         logger.info(
             "Fitting linear regression",
             extra={

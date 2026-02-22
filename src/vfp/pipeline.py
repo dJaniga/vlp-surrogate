@@ -94,8 +94,9 @@ def _pipeline(
         features_keys=features_keys,
         targets_keys=targets_keys,
     )
+    features_name = tuple(training_data.features.keys())
 
-    model.fit(training_data.features.to_numpy(), training_data.target.to_numpy())
+    model.fit(training_data.features.to_numpy(), training_data.target.to_numpy(), features_name)
 
     prediction_content = to_prediction_format(
         training_data.features, keys=features_keys, n_size=vfp_table_granularity
