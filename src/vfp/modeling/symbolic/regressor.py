@@ -8,7 +8,7 @@ import numpy as np
 from deap import base, gp, tools
 from tqdm import tqdm
 
-from toolbox import all_fit_metrics
+from toolbox import run_all_regression_metrics
 from vfp.modeling.base import VFPModel
 from .algebraic_simplification import simplify_island
 from .helpers import (
@@ -256,7 +256,7 @@ class SymbolicRegressor(VFPModel):
         )
 
         y_pred = self.predict(features)
-        fit_metrics = all_fit_metrics(targets.flatten(), y_pred.flatten())
+        fit_metrics = run_all_regression_metrics(targets.flatten(), y_pred.flatten())
         logger.info(
             "Fit diagnostics",
             extra={"fit_metrics": fit_metrics},

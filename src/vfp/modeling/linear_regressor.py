@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from toolbox import all_fit_metrics
+from toolbox import run_all_regression_metrics
 from vfp.modeling.base import VFPModel
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ class LinearRegressionModel(VFPModel):
         # Predictions
 
         y_pred = self.predict(features)
-        fit_metrics = all_fit_metrics(targets, y_pred)
+        fit_metrics = run_all_regression_metrics(targets, y_pred)
 
         logger.info(
             "Fit diagnostics",
