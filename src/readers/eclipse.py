@@ -1,9 +1,9 @@
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Type
-from dataclasses import dataclass, field
 from typing import Mapping
+from typing import Type
 
 import numpy as np
 import pandas as pd
@@ -20,7 +20,7 @@ from readers.models import (
     FitResults,
     WellDataFilter,
 )
-from toolbox.fit_metrics import all_fit_metrics
+from toolbox.fit_metrics import run_all_regression_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -335,9 +335,9 @@ class EclipseReader(ReaderInterface):
         mask_prod = finite_mask & (df[prod_key].to_numpy() > 0)
         mask_inj = finite_mask & (df[inj_key].to_numpy() > 0)
 
-        overall = all_fit_metrics(y_actual, y_pred, mask_overall)
-        production = all_fit_metrics(y_actual, y_pred, mask_prod)
-        injection = all_fit_metrics(y_actual, y_pred, mask_inj)
+        overall = run_all_regression_metrics(y_actual, y_pred, mask_overall)
+        production = run_all_regression_metrics(y_actual, y_pred, mask_prod)
+        injection = run_all_regression_metrics(y_actual, y_pred, mask_inj)
 
         if _all_nan(overall) and _all_nan(production) and _all_nan(injection):
             logger.info("All fit metrics are NaN; skipping", extra={"well": well})
