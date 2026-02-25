@@ -276,7 +276,7 @@ def run_evaluator(
     for well_name, fit_data in wells_fit_data.items():
         logger.info("Exporting well fit data", extra={"Well": well_name})
 
-        folder_path = Path(output_folder_path, well_name)
+        folder_path = Path(output_folder_path, f"evaluation_{well_name}")
         folder_path.mkdir(parents=True, exist_ok=True)
 
         fit_data.data_frame.to_csv(Path(folder_path, "fit_data.csv"), index=False)
