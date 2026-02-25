@@ -18,13 +18,13 @@ def run_all_regression_metrics(
     Returns NaN for metrics if no valid samples remain.
     """
 
-    y_actual = np.asarray(y_actual, dtype=float)
-    y_pred = np.asarray(y_pred, dtype=float)
+    y_actual = np.asarray(y_actual, dtype=float).flatten()
+    y_pred = np.asarray(y_pred, dtype=float).flatten()
 
     if mask is None:
         mask = np.ones_like(y_actual, dtype=bool)
 
-    mask = np.asarray(mask, dtype=bool)
+    mask = np.asarray(mask, dtype=bool).flatten()
 
     # Basic validity mask
     valid = mask & np.isfinite(y_actual) & np.isfinite(y_pred)

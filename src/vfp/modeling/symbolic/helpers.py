@@ -44,7 +44,6 @@ def build_seed_individuals(
 
     # Pre-allocate constant terminals to reuse
     const_zero = _const(0.0)
-    const_one = _const(1.0)
 
     seeds: list[list[gp.Primitive | gp.Terminal]] = []
 

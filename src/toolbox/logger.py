@@ -56,7 +56,7 @@ def setup_logging() -> None:
 
     try:
         logging.config.dictConfig(logging_config)
-    except Exception as e:
+    except Exception:
         import traceback
 
         traceback.print_exc()

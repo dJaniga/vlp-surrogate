@@ -3,12 +3,12 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 from deap import base, gp, tools
 from tqdm import tqdm
 
-from toolbox import run_all_regression_metrics
 from vfp.modeling.base import VFPModel
 from .algebraic_simplification import simplify_island
 from .helpers import (
@@ -53,6 +53,19 @@ class SymbolicRegressor(VFPModel):
     _target_mean: float = 0.0
     _target_std: float = 1.0
 
+    def __str__(self) -> str:
+        return "symbolic_regressor"
+
+    def get_fit_details(self) -> dict[str, Any]:
+        if self.best_individual_ is None:
+            raise ValueError("Model has not been fit yet.")
+        return {
+            "pareto_size": len(self.pareto_front_),
+            "best_mse": self.best_individual_.fitness.values[0],  # type: ignore[attr-defined]
+            "best_complexity": self.best_individual_.fitness.values[1],  # type: ignore[attr-defined]
+            "expression": str(self.best_individual_),
+        }
+
     def _standardize_features(
         self, features: np.ndarray, *, fit: bool = False
     ) -> np.ndarray:
@@ -96,10 +109,15 @@ class SymbolicRegressor(VFPModel):
         targets_std = self._standardize_targets(targets)
 
         self._pset = build_primitive_set(n_features)
-        if features_name:
-            self._pset.renameArguments(
-                **{f"ARG{idx}": name for idx, name in enumerate(features_name)}
-            )
+        self.features_name = tuple(
+            features_name
+            if features_name
+            else tuple(f"ARG{i}" for i in range(features.shape[1]))
+        )
+        self._pset.renameArguments(
+            **{f"ARG{idx}": name for idx, name in enumerate(self.features_name)}
+        )
+
         self._toolbox = build_toolbox(
             self._pset,
             rng=rng,
@@ -247,21 +265,8 @@ class SymbolicRegressor(VFPModel):
 
         logger.info(
             "Symbolic regression complete",
-            extra={
-                "pareto_size": len(self.pareto_front_),
-                "best_mse": self.best_individual_.fitness.values[0],  # type: ignore[attr-defined]
-                "best_complexity": self.best_individual_.fitness.values[1],  # type: ignore[attr-defined]
-                "expression": str(self.best_individual_),
-            },
+            extra=self.get_fit_details(),
         )
-
-        y_pred = self.predict(features)
-        fit_metrics = run_all_regression_metrics(targets.flatten(), y_pred.flatten())
-        logger.info(
-            "Fit diagnostics",
-            extra={"fit_metrics": fit_metrics},
-        )
-
         return self
 
     def predict(self, features: np.ndarray) -> np.ndarray:

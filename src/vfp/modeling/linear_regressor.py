@@ -2,27 +2,35 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
-from toolbox import run_all_regression_metrics
 from vfp.modeling.base import VFPModel
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
-class LinearRegressionModel(VFPModel):
+class LinearRegressor(VFPModel):
     """Simple linear regression using least squares."""
 
     coefficients: np.ndarray | None = None
+
+    def get_fit_details(self) -> dict[str, Any]:
+        if self.coefficients is None:
+            raise ValueError("Model has not been fit yet.")
+        return dict(zip(self.features_name, self.coefficients))
+
+    def __str__(self) -> str:
+        return "linear_regressor"
 
     def fit(
         self,
         features: np.ndarray,
         targets: np.ndarray,
         features_name: tuple[str, ...] | None = None,
-    ) -> LinearRegressionModel:
+    ) -> LinearRegressor:
         logger.info(
             "Fitting linear regression",
             extra={
@@ -33,20 +41,13 @@ class LinearRegressionModel(VFPModel):
         design_matrix = np.column_stack([np.ones(features.shape[0]), features])
         coefficients, *_ = np.linalg.lstsq(design_matrix, targets, rcond=None)
         self.coefficients = coefficients
-        # Predictions
-
-        y_pred = self.predict(features)
-        fit_metrics = run_all_regression_metrics(targets, y_pred)
-
-        logger.info(
-            "Fit diagnostics",
-            extra={"fit_metrics": fit_metrics},
+        self.features_name = ("Intercept",) + (
+            features_name
+            if features_name
+            else tuple(f"ARG{i}" for i in range(features.shape[1]))
         )
 
-        if features_name:
-            features_name_with_intercept = ("Intercept",) + features_name
-            coefficients_dict = dict(zip(features_name_with_intercept, coefficients))
-            logger.info("Coefficients", extra={"coefficients": coefficients_dict})
+        logger.info("Coefficients", extra={"coefficients": self.get_fit_details()})
 
         return self
 

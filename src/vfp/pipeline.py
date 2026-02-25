@@ -7,7 +7,7 @@ import pandas as pd
 
 from vfp.builder import prepare_table_body, VFPTable, VFPType
 from vfp.export import export_VFP_table
-from vfp.modeling import VFPModel
+from vfp.modeling import VFPModel, ModelWrapper
 from vfp.preprocess import (
     get_training_data,
     to_prediction_format,
@@ -51,6 +51,9 @@ def vfp_pipeline(
     config: VFPPipelineConfig,
     vfp_table_granularity: int,
 ) -> VFPTable | None:
+
+    fit_results_export_path = output_file_path.with_suffix("")
+
     table = _pipeline(
         reference_model=reference_model,
         well_data=well_data,
@@ -61,6 +64,7 @@ def vfp_pipeline(
         vfp_table_header_template=config.header_template,
         vfp_table_id=vfp_table_id,
         bhp_depth=bhp_depth,
+        fit_results_export_path=fit_results_export_path,
     )
 
     if table is None:
@@ -79,9 +83,11 @@ def _pipeline(
     vfp_table_granularity: int,
     vfp_table_header_template: str,
     vfp_table_id: int,
-    bhp_depth,
+    bhp_depth: float,
+    fit_results_export_path: Path,
 ):
     model = copy.deepcopy(reference_model)
+    model_wrapper = ModelWrapper(model=model, export_path=fit_results_export_path)
 
     valid_operating_conditions = filter_valid_operating_conditions(
         well_data, required_valid_operation_condition_keys
@@ -96,7 +102,8 @@ def _pipeline(
     )
     features_name = tuple(training_data.features.keys())
 
-    model.fit(
+    model_wrapper.fit(
+        training_data.T.to_numpy(),
         training_data.features.to_numpy(),
         training_data.target.to_numpy(),
         features_name,
@@ -106,7 +113,7 @@ def _pipeline(
         training_data.features, keys=features_keys, n_size=vfp_table_granularity
     )
 
-    predicted_targets = model.predict(prediction_content.features)
+    predicted_targets = model_wrapper.predict(prediction_content.features)
     reshaped_targets = reshape_predictions(
         predicted_targets, n_size=vfp_table_granularity
     )

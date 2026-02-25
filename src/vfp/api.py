@@ -1,5 +1,6 @@
 import json
 import logging
+import shutil
 from collections.abc import Set
 from pathlib import Path
 from typing import Literal
@@ -7,7 +8,7 @@ from typing import Literal
 from readers import initialize_reader_from_path, WellDataFilter
 from vfp.details import VFPDetails
 from vfp.export import export_VFP_manifest
-from vfp.modeling import VFPModel, LinearRegressionModel, SymbolicRegressor
+from vfp.modeling import VFPModel, LinearRegressor, SymbolicRegressor
 from vfp.pipeline import vfp_pipeline, VFPPROD_CONFIG, VFPINJ_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ def create_model(name: ModelName, **kwargs) -> VFPModel:
     """Factory for supported models (linear or ga)."""
     logger.info("Creating model", extra={"model": name})
     if name == "linear":
-        return LinearRegressionModel(**kwargs)
+        return LinearRegressor(**kwargs)
     if name == "symbolic":
         return SymbolicRegressor(**kwargs)
     raise ValueError(f"Unsupported model name: {name}")
@@ -179,6 +180,8 @@ def run_pipeline(
     if table_granularity <= 2:
         raise ValueError("table_granularity must be greater than 2")
 
+    if output_folder_path.exists():
+        shutil.rmtree(output_folder_path)
     output_folder_path.mkdir(parents=True, exist_ok=True)
 
     reader = initialize_reader_from_path(source_file_path)
