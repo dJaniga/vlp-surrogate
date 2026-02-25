@@ -37,6 +37,13 @@ formatter = "standard"
 level = "INFO"
 stream = "ext://sys.stdout"
 
+[tool.vlp_surrogate.logging.handlers.file]
+class = "logging.FileHandler"
+level = "INFO"
+formatter = "standard"
+filename = "logs/vlp_surrogate.log"
+encoding = "utf-8"
+
 [tool.vlp_surrogate.logging.root]
 level = "INFO"
-handlers = ["console"]
+handlers = ["console", "file"]
