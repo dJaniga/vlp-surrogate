@@ -50,11 +50,18 @@ class ExtraFormatter(logging.Formatter):
 def setup_logging() -> None:
     config_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
     config = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    logging_config = config.get("tool", {}).get("vlp_surrogate", {}).get("logging")
-    if not logging_config:
-        logging.basicConfig(level=logging.INFO)
-        return
-    logging.config.dictConfig(logging_config)
+    logging_config = config["tool"]["vlp_surrogate"]["logging"]
+
+    Path("logs").mkdir(parents=True, exist_ok=True)
+
+    try:
+        logging.config.dictConfig(logging_config)
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        raise
+
     logging.getLogger(__name__).info(
         "Logging configured", extra={"config": "pyproject"}
     )
