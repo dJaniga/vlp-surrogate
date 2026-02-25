@@ -44,6 +44,7 @@ level = "INFO"
 formatter = "standard"
 filename = "logs/vlp_surrogate.log"
 encoding = "utf-8"
+mode = "w"
 
 [tool.vlp_surrogate.logging.root]
 level = "INFO"
