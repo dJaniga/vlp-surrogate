@@ -78,9 +78,7 @@ class ModelWrapper:
             f.write(orjson.dumps(fit_details, option=orjson.OPT_SERIALIZE_NUMPY))
 
         df_content = {"T": index.tolist()}
-        df_content.update(
-            {k: v for k, v in zip(features_name, features.T.tolist())}
-        )
+        df_content.update({k: v for k, v in zip(features_name, features.T.tolist())})
         df_content["target"] = targets.flatten().tolist()
         df_content["predicted"] = y_pred.flatten().tolist()
         df = pd.DataFrame(df_content)
