@@ -326,14 +326,19 @@ class EclipseReader(ReaderInterface):
             )
             return None
 
-        finite_mask = np.isfinite(y_actual) & np.isfinite(y_pred)
-        if not np.any(finite_mask):
-            logger.info("No finite points for fit calculation", extra={"well": well})
+        positive_mask = (
+            np.isfinite(y_actual) & np.isfinite(y_pred) & (y_actual > 0) & (y_pred > 0)
+        )
+
+        if not np.any(positive_mask):
+            logger.info(
+                "No positive finite points for fit calculation", extra={"well": well}
+            )
             return None
 
-        mask_overall = finite_mask
-        mask_prod = finite_mask & (df[prod_key].to_numpy() > 0)
-        mask_inj = finite_mask & (df[inj_key].to_numpy() > 0)
+        mask_overall = positive_mask
+        mask_prod = positive_mask & (df[prod_key].to_numpy() > 0)
+        mask_inj = positive_mask & (df[inj_key].to_numpy() > 0)
 
         overall = run_all_regression_metrics(y_actual, y_pred, mask_overall)
         production = run_all_regression_metrics(y_actual, y_pred, mask_prod)
@@ -343,7 +348,7 @@ class EclipseReader(ReaderInterface):
             logger.info("All fit metrics are NaN; skipping", extra={"well": well})
             return None
 
-        logger.debug(
+        logger.info(
             "Fit metrics computed",
             extra={
                 "well": well,
@@ -358,11 +363,11 @@ class EclipseReader(ReaderInterface):
 
         out = pd.DataFrame(
             {
-                "T": df.index,
-                "measured": y_actual,
-                "simulated": y_pred,
-                "production_mask": mask_prod,
-                "injection_mask": mask_inj,
+                "T": df.index[mask_overall],
+                "measured": y_actual[mask_overall],
+                "simulated": y_pred[mask_overall],
+                "mask_p": mask_prod[mask_overall],
+                "mask_i": mask_inj[mask_overall],
             },
         )
 

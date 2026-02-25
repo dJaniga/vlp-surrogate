@@ -5,6 +5,7 @@ from collections.abc import Set
 from pathlib import Path
 from typing import Literal
 
+
 from readers import initialize_reader_from_path, WellDataFilter
 from vfp.details import VFPDetails
 from vfp.export import export_VFP_manifest
@@ -258,6 +259,8 @@ def run_evaluator(
     output_folder_path: Path,
     well_data_filter_path: Path | None = None,
 ):
+    if output_folder_path.exists():
+        shutil.rmtree(output_folder_path)
     output_folder_path.mkdir(parents=True, exist_ok=True)
 
     reader = initialize_reader_from_path(source_file_path)
@@ -272,7 +275,31 @@ def run_evaluator(
 
     for well_name, fit_data in wells_fit_data.items():
         logger.info("Exporting well fit data", extra={"Well": well_name})
-        export_path = Path(output_folder_path, f"{well_name}_fit.csv")
-        fit_data.data_frame.to_csv(export_path)
+
+        folder_path = Path(output_folder_path, well_name)
+        folder_path.mkdir(parents=True, exist_ok=True)
+
+        fit_data.data_frame.to_csv(Path(folder_path, "fit_data.csv"), index=False)
+
+        with open(
+            Path(folder_path, "overall_fit_results").with_suffix(".json"),
+            "w",
+        ) as f:
+            fit_metrics = fit_data.overall
+            json.dump(fit_metrics, f, indent=4)
+
+        with open(
+            Path(folder_path, "production_fit_results").with_suffix(".json"),
+            "w",
+        ) as f:
+            fit_metrics = fit_data.production
+            json.dump(fit_metrics, f, indent=4)
+
+        with open(
+            Path(folder_path, "injection_fit_results").with_suffix(".json"),
+            "w",
+        ) as f:
+            fit_metrics = fit_data.injection
+            json.dump(fit_metrics, f, indent=4)
 
     return wells_fit_data
