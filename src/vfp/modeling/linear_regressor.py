@@ -30,6 +30,7 @@ class LinearRegressor(VFPModel):
         features: np.ndarray,
         targets: np.ndarray,
         features_name: tuple[str, ...] | None = None,
+        eval_set: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> LinearRegressor:
         logger.info(
             "Fitting linear regression",

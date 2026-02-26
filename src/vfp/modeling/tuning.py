@@ -1,0 +1,85 @@
+import copy
+import logging
+import numpy as np
+import optuna
+from sklearn.model_selection import KFold
+from sklearn.metrics import mean_squared_error
+
+from vfp.modeling.base import VFPModel
+from vfp.modeling.xgboost import XGBoostRegressor
+from vfp.modeling.symbolic.regressor import SymbolicRegressor
+
+logger = logging.getLogger(__name__)
+
+
+def tune_hyperparameters(
+    model: VFPModel,
+    features: np.ndarray,
+    targets: np.ndarray,
+    n_trials: int = 20,
+    cv_folds: int = 5,
+) -> VFPModel:
+    if not isinstance(model, (XGBoostRegressor, SymbolicRegressor)):
+        logger.info(
+            f"Hyperparameter tuning not implemented for {type(model).__name__}. Returning original model."
+        )
+        return model
+
+    def objective(trial: optuna.Trial) -> float:
+        kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        cv_scores = []
+
+        for train_idx, val_idx in kf.split(features):
+            X_train, X_val = features[train_idx], features[val_idx]
+            y_train, y_val = targets[train_idx], targets[val_idx]
+
+            trial_model = copy.deepcopy(model)
+
+            if isinstance(trial_model, XGBoostRegressor):
+                kwargs = {
+                    "max_depth": trial.suggest_int("max_depth", 1, 3),
+                    "subsample": trial.suggest_float("subsample", 0.5, 0.8),
+                    "colsample_bytree": trial.suggest_float(
+                        "colsample_bytree", 0.5, 0.8
+                    ),
+                    "reg_alpha": trial.suggest_float("reg_alpha", 1e-2, 10.0, log=True),
+                    "reg_lambda": trial.suggest_float(
+                        "reg_lambda", 1e-2, 10.0, log=True
+                    ),
+                    "learning_rate": trial.suggest_categorical(
+                        "learning_rate", [0.01, 0.05]
+                    ),
+                    "n_estimators": trial.suggest_int("n_estimators", 100, 500),
+                    "early_stopping_rounds": 10,
+                }
+                trial_model.xgb_kwargs.update(kwargs)
+            elif isinstance(trial_model, SymbolicRegressor):
+                trial_model.parsimony_coefficient = trial.suggest_float(
+                    "parsimony_coefficient", 0.01, 0.5, log=True
+                )
+                trial_model.basic_arithmetic_only = True
+
+            trial_model.fit(X_train, y_train, eval_set=(X_val, y_val))
+            preds = trial_model.predict(X_val)
+            cv_scores.append(mean_squared_error(y_val, preds))
+
+        return float(np.mean(cv_scores))
+
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    study = optuna.create_study(direction="minimize")
+    logger.info(
+        f"Starting hyperparameter tuning for {type(model).__name__} with {n_trials} trials."
+    )
+    study.optimize(objective, n_trials=n_trials)
+
+    best_params = study.best_params
+    logger.info(f"Best hyperparameters found: {best_params}")
+
+    best_model = copy.deepcopy(model)
+    if isinstance(best_model, XGBoostRegressor):
+        best_model.xgb_kwargs.update(best_params)
+    elif isinstance(best_model, SymbolicRegressor):
+        best_model.parsimony_coefficient = best_params["parsimony_coefficient"]
+        best_model.basic_arithmetic_only = True
+
+    return best_model

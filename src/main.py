@@ -37,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         help="VFP surrogate model type",
         required=True,
-        choices=["linear", "symbolic"],
+        choices=["linear", "symbolic", "xgb", "gp"],
         default="linear",
     )
 
@@ -103,6 +103,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--table-granularity", type=int, default=5, help="VFP records n-size"
     )
 
+    parser_pipeline.add_argument(
+        "--optimize-hyperparameters",
+        action="store_true",
+        help="Enable hyperparameter tuning (e.g. Optuna)",
+        default=True,
+    )
+
+    parser_pipeline.add_argument(
+        "--no-optimize-hyperparameters",
+        action="store_false",
+        dest="optimize_hyperparameters",
+        help="Disable hyperparameter tuning",
+    )
+
     parser_evaluator = subparsers.add_parser(
         "evaluator",
         help="Evaluator mode - evaluate VFP surrogate model against simulation results.",
@@ -150,7 +164,12 @@ def main():
         elif parsed_args.model == "linear":
             logger.info("Using linear model", extra={"model": "linear"})
             model = create_model("linear")
-
+        elif parsed_args.model == "xgb":
+            logger.info("Using xgb model")
+            model = create_model("xgb")
+        elif parsed_args.model == "gp":
+            logger.info("Using gp model")
+            model = create_model("gp")
         else:
             raise ValueError(f"Unsupported model: {parsed_args.model}")
 
@@ -161,6 +180,7 @@ def main():
             output_folder_path=parsed_args.output_folder,
             well_data_filter_path=parsed_args.well_data_filter_file,
             table_granularity=parsed_args.table_granularity,
+            optimize_hyperparameters=parsed_args.optimize_hyperparameters,
         )
         logger.info("Pipeline completed")
 
