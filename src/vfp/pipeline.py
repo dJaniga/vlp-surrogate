@@ -109,7 +109,7 @@ def _pipeline(
         training_data.features.to_numpy(),
         training_data.target.to_numpy(),
         features_name,
-        optimize_hyperparameters=True,  # Tune hyperparameters to fix overfitting
+        optimize_hyperparameters=optimize_hyperparameters,
     )
 
     prediction_content = to_prediction_format(

@@ -14,7 +14,6 @@ import orjson
 import pandas as pd
 
 from toolbox import run_all_regression_metrics
-from vfp.modeling.tuning import tune_hyperparameters
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +61,8 @@ class ModelWrapper:
 
         # Hyperparameter Tuning using Optuna
         if optimize_hyperparameters:
+            from vfp.modeling.tuning import tune_hyperparameters
+
             self.model = tune_hyperparameters(self.model, features, targets)
 
         X_train, X_test, y_train, y_test = train_test_split(
