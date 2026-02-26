@@ -43,7 +43,9 @@ def _random_ephemeral_constant() -> float:
     return float(np.random.uniform(-1.0, 1.0))
 
 
-def build_primitive_set(feature_count: int) -> gp.PrimitiveSet:
+def build_primitive_set(
+    feature_count: int, basic_arithmetic_only: bool = False
+) -> gp.PrimitiveSet:
     """Build the GP primitive set with operators suitable for VFP regression.
 
     All primitives use plain Python functions (not numpy ufuncs) to ensure
@@ -54,9 +56,12 @@ def build_primitive_set(feature_count: int) -> gp.PrimitiveSet:
     pset.addPrimitive(_sub, 2)
     pset.addPrimitive(_mul, 2)
     pset.addPrimitive(_protected_div, 2)
-    pset.addPrimitive(_protected_sqrt, 1)
-    pset.addPrimitive(_square, 1)
-    pset.addPrimitive(_abs, 1)
-    pset.addPrimitive(_neg, 1)
+
+    if not basic_arithmetic_only:
+        pset.addPrimitive(_protected_sqrt, 1)
+        pset.addPrimitive(_square, 1)
+        pset.addPrimitive(_abs, 1)
+        pset.addPrimitive(_neg, 1)
+
     pset.addEphemeralConstant("rand", _random_ephemeral_constant)
     return pset
