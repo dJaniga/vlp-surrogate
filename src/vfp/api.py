@@ -9,12 +9,18 @@ from typing import Literal
 from readers import initialize_reader_from_path, WellDataFilter
 from vfp.details import VFPDetails
 from vfp.export import export_VFP_manifest
-from vfp.modeling import VFPModel, LinearRegressor, SymbolicRegressor
+from vfp.modeling import (
+    VFPModel,
+    LinearRegressor,
+    SymbolicRegressor,
+    XGBoostRegressor,
+    GaussianProcessRegressor,
+)
 from vfp.pipeline import vfp_pipeline, VFPPROD_CONFIG, VFPINJ_CONFIG
 
 logger = logging.getLogger(__name__)
 
-ModelName = Literal["linear", "symbolic"]
+ModelName = Literal["linear", "symbolic", "xgb", "gp"]
 
 
 # -----------------------------------------------------------------------------
@@ -23,12 +29,16 @@ ModelName = Literal["linear", "symbolic"]
 
 
 def create_model(name: ModelName, **kwargs) -> VFPModel:
-    """Factory for supported models (linear or ga)."""
+    """Factory for supported models (linear, symbolic, xgb, gp)."""
     logger.info("Creating model", extra={"model": name})
     if name == "linear":
         return LinearRegressor(**kwargs)
     if name == "symbolic":
         return SymbolicRegressor(**kwargs)
+    if name == "xgb":
+        return XGBoostRegressor(**kwargs)
+    if name == "gp":
+        return GaussianProcessRegressor(**kwargs)
     raise ValueError(f"Unsupported model name: {name}")
 
 
@@ -120,6 +130,7 @@ def _process_well_stream(
     output_folder_path: Path,
     reference_model: VFPModel,
     table_granularity: int,
+    optimize_hyperparameters: bool,
 ) -> Path | None:
     if stream_data is None or stream_data.empty:
         return None
@@ -153,6 +164,7 @@ def _process_well_stream(
         bhp_depth=bhp_depth,
         config=config,
         vfp_table_granularity=table_granularity,
+        optimize_hyperparameters=optimize_hyperparameters,
     )
 
     if vfp_table is None:
@@ -177,6 +189,7 @@ def run_pipeline(
     output_folder_path: Path,
     well_data_filter_path: Path | None = None,
     table_granularity: int = 5,
+    optimize_hyperparameters: bool = True,
 ) -> list[Path]:
     if table_granularity <= 2:
         raise ValueError("table_granularity must be greater than 2")
@@ -225,6 +238,7 @@ def run_pipeline(
             output_folder_path=output_folder_path,
             reference_model=reference_model,
             table_granularity=table_granularity,
+            optimize_hyperparameters=optimize_hyperparameters,
         )
         if prod_path is not None:
             manifest_content.append(prod_path)
@@ -239,6 +253,7 @@ def run_pipeline(
             output_folder_path=output_folder_path,
             reference_model=reference_model,
             table_granularity=table_granularity,
+            optimize_hyperparameters=optimize_hyperparameters,
         )
         if inj_path is not None:
             manifest_content.append(inj_path)
