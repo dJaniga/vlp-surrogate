@@ -131,6 +131,7 @@ def _process_well_stream(
     reference_model: VFPModel,
     table_granularity: int,
     optimize_hyperparameters: bool,
+    tuning_metric: str,
 ) -> Path | None:
     if stream_data is None or stream_data.empty:
         return None
@@ -165,6 +166,7 @@ def _process_well_stream(
         config=config,
         vfp_table_granularity=table_granularity,
         optimize_hyperparameters=optimize_hyperparameters,
+        tuning_metric=tuning_metric,
     )
 
     if vfp_table is None:
@@ -190,6 +192,7 @@ def run_pipeline(
     well_data_filter_path: Path | None = None,
     table_granularity: int = 5,
     optimize_hyperparameters: bool = True,
+    tuning_metric: str = "mean_squared_error",
 ) -> list[Path]:
     if table_granularity <= 2:
         raise ValueError("table_granularity must be greater than 2")
@@ -239,6 +242,7 @@ def run_pipeline(
             reference_model=reference_model,
             table_granularity=table_granularity,
             optimize_hyperparameters=optimize_hyperparameters,
+            tuning_metric=tuning_metric,
         )
         if prod_path is not None:
             manifest_content.append(prod_path)
@@ -254,6 +258,7 @@ def run_pipeline(
             reference_model=reference_model,
             table_granularity=table_granularity,
             optimize_hyperparameters=optimize_hyperparameters,
+            tuning_metric=tuning_metric,
         )
         if inj_path is not None:
             manifest_content.append(inj_path)

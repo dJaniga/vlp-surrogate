@@ -51,6 +51,7 @@ def vfp_pipeline(
     config: VFPPipelineConfig,
     vfp_table_granularity: int,
     optimize_hyperparameters: bool = True,
+    tuning_metric: str = "mean_squared_error",
 ) -> VFPTable | None:
     fit_results_export_path = output_file_path.with_suffix("")
 
@@ -66,6 +67,7 @@ def vfp_pipeline(
         bhp_depth=bhp_depth,
         fit_results_export_path=fit_results_export_path,
         optimize_hyperparameters=optimize_hyperparameters,
+        tuning_metric=tuning_metric,
     )
 
     if table is None:
@@ -87,6 +89,7 @@ def _pipeline(
     bhp_depth: float,
     fit_results_export_path: Path,
     optimize_hyperparameters: bool = True,
+    tuning_metric: str = "mean_squared_error",
 ):
     model = copy.deepcopy(reference_model)
     model_wrapper = ModelWrapper(model=model, export_path=fit_results_export_path)
@@ -110,6 +113,7 @@ def _pipeline(
         training_data.target.to_numpy(),
         features_name,
         optimize_hyperparameters=optimize_hyperparameters,
+        tuning_metric=tuning_metric,
     )
 
     prediction_content = to_prediction_format(

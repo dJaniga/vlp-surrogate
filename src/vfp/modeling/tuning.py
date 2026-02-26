@@ -5,11 +5,11 @@ import logging
 import numpy as np
 import optuna
 from sklearn.model_selection import KFold
-from sklearn.metrics import mean_squared_error
 
 from vfp.modeling.base import VFPModel
 from vfp.modeling.xgboost import XGBoostRegressor
 from vfp.modeling.symbolic.regressor import SymbolicRegressor
+from vfp.modeling.tuning_metrics import evaluate_metric, get_metric_direction
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,7 @@ def tune_hyperparameters(
     targets: np.ndarray,
     n_trials: int = 20,
     cv_folds: int = 5,
+    tuning_metric: str = "mean_squared_error",
 ) -> VFPModel:
     if not isinstance(model, (XGBoostRegressor, SymbolicRegressor)):
         logger.info(
@@ -63,14 +64,15 @@ def tune_hyperparameters(
 
             trial_model.fit(X_train, y_train, eval_set=(X_val, y_val))
             preds = trial_model.predict(X_val)
-            cv_scores.append(mean_squared_error(y_val, preds))
+            cv_scores.append(evaluate_metric(tuning_metric, y_val, preds))
 
         return float(np.mean(cv_scores))
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
-    study = optuna.create_study(direction="minimize")
+    direction = get_metric_direction(tuning_metric)
+    study = optuna.create_study(direction=direction)
     logger.info(
-        f"Starting hyperparameter tuning for {type(model).__name__} with {n_trials} trials."
+        f"Starting hyperparameter tuning for {type(model).__name__} with {n_trials} trials, optimizing {tuning_metric} ({direction})."
     )
     study.optimize(objective, n_trials=n_trials)
 

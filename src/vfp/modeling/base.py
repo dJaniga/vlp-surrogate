@@ -51,6 +51,7 @@ class ModelWrapper:
         targets: np.ndarray,
         features_name: tuple[str, ...] | None = None,
         optimize_hyperparameters: bool = False,
+        tuning_metric: str = "mean_squared_error",
     ) -> VFPModel:
         # Determine features names safely
         _features_name: tuple[str, ...] = (
@@ -63,7 +64,9 @@ class ModelWrapper:
         if optimize_hyperparameters:
             from vfp.modeling.tuning import tune_hyperparameters
 
-            self.model = tune_hyperparameters(self.model, features, targets)
+            self.model = tune_hyperparameters(
+                self.model, features, targets, tuning_metric=tuning_metric
+            )
 
         X_train, X_test, y_train, y_test = train_test_split(
             features, targets, test_size=0.2, random_state=42

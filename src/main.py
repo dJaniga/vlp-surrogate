@@ -5,6 +5,7 @@ from pathlib import Path
 from toolbox import setup_logging
 from vfp import run_pipeline, run_evaluator
 from vfp.api import create_model
+from vfp.modeling.tuning_metrics import AVAILABLE_METRICS
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable hyperparameter tuning (e.g. Optuna)",
         default=False,
     )
+    parser_pipeline.add_argument(
+        "--tuning-metric",
+        type=str,
+        help="Metric to optimize during hyperparameter tuning (e.g., mean_squared_error, r2_score).",
+        choices=AVAILABLE_METRICS,
+        default="mean_squared_error",
+    )
 
     parser_evaluator = subparsers.add_parser(
         "evaluator",
@@ -174,6 +182,7 @@ def main():
             well_data_filter_path=parsed_args.well_data_filter_file,
             table_granularity=parsed_args.table_granularity,
             optimize_hyperparameters=parsed_args.optimize_hyperparameters,
+            tuning_metric=parsed_args.tuning_metric,
         )
         logger.info("Pipeline completed")
 
