@@ -58,7 +58,7 @@ def tune_hyperparameters(
                 trial_model.xgb_kwargs.update(kwargs)
             elif isinstance(trial_model, SymbolicRegressor):
                 trial_model.parsimony_coefficient = trial.suggest_float(
-                    "parsimony_coefficient", 0.01, 0.5, log=True
+                    "parsimony_coefficient", 0.0001, 0.01, log=True
                 )
                 trial_model.basic_arithmetic_only = True
 
