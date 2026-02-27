@@ -105,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser_pipeline.add_argument(
-        "--optimize_hyperparameters",
+        "--optimize-hyperparameters",
         action="store_true",
         help="Enable hyperparameter tuning (e.g. Optuna)",
         default=False,
