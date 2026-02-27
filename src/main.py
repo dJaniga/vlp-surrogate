@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--ga-generations", type=int, default=80, help="GA generations."
     )
     parser_pipeline.add_argument(
-        "--ga-population", type=int, default=60, help="GA population size."
+        "--ga-population", type=int, default=100, help="GA population size."
     )
 
     parser_pipeline.add_argument(

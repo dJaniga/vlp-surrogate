@@ -172,7 +172,7 @@ class SymbolicRegressor(VFPModel):
             islands.append(island)
 
         best_eval_mse = float("inf")
-        patience = 10
+        patience = max(self.generations // 10, 10) # 10% of generations or 10
         patience_counter = 0
 
         for generation in tqdm(range(1, self.generations + 1)):
