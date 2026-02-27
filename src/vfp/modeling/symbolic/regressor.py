@@ -148,6 +148,7 @@ class SymbolicRegressor(VFPModel):
                 "generations": self.generations,
                 "islands": self.n_islands,
                 "island_size": island_size,
+                "parsimony_coefficient": self.parsimony_coefficient
             },
         )
 
