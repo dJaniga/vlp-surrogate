@@ -88,7 +88,8 @@ class ModelWrapper:
         # compute k-Fold Cross-Validation metrics
         kf = KFold(n_splits=5, shuffle=True, random_state=42)
         cv_metrics_list = []
-        for train_idx, val_idx in kf.split(features):
+        for idx, (train_idx, val_idx) in enumerate(kf.split(features)):
+            logger.info(f"Running CV fold {idx+1} of 5")
             X_cv_train, X_cv_val = features[train_idx], features[val_idx]
             y_cv_train, y_cv_val = targets[train_idx], targets[val_idx]
             cv_model = copy.deepcopy(self.model)

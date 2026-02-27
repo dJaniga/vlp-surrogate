@@ -32,7 +32,8 @@ def tune_hyperparameters(
         kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
         cv_scores = []
 
-        for train_idx, val_idx in kf.split(features):
+        for idx,(train_idx, val_idx) in enumerate(kf.split(features)):
+            logger.info(f"Running CV fold {idx+1} of {cv_folds} for {type(model).__name__} hyperparameter tuning")
             X_train, X_val = features[train_idx], features[val_idx]
             y_train, y_val = targets[train_idx], targets[val_idx]
 
