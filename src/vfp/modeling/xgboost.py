@@ -38,6 +38,12 @@ class XGBoostRegressor(VFPModel):
         features_name: tuple[str, ...] | None = None,
         eval_set: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> XGBoostRegressor:
+        self.features_name = (
+            features_name
+            if features_name
+            else {f"ARG{idx}": name for idx, name in enumerate(features_name)}
+        )
+
         logger.info(
             "Fitting XGBoost regression",
             extra={
@@ -67,12 +73,6 @@ class XGBoostRegressor(VFPModel):
                 )
         else:
             self._model.fit(features, targets)
-
-        self.features_name = (
-            features_name
-            if features_name
-            else tuple(f"ARG{i}" for i in range(features.shape[1]))
-        )
 
         logger.info(
             "Feature Importances", extra={"importances": self.get_fit_details()}

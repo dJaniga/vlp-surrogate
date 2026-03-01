@@ -65,7 +65,11 @@ class ModelWrapper:
             from vfp.modeling.tuning import tune_hyperparameters
 
             self.model = tune_hyperparameters(
-                self.model, features, targets, tuning_metric=tuning_metric
+                self.model,
+                features,
+                targets,
+                tuning_metric=tuning_metric,
+                features_name=features_name,
             )
 
         X_train, X_test, y_train, y_test = train_test_split(

@@ -18,6 +18,7 @@ def tune_hyperparameters(
     model: VFPModel,
     features: np.ndarray,
     targets: np.ndarray,
+    features_name: tuple[str, ...],
     n_trials: int = 20,
     cv_folds: int = 5,
     tuning_metric: str = "mean_squared_error",
@@ -63,7 +64,9 @@ def tune_hyperparameters(
                 )
                 trial_model.basic_arithmetic_only = True
 
-            trial_model.fit(X_train, y_train, eval_set=(X_val, y_val))
+            trial_model.fit(
+                X_train, y_train, features_name=features_name, eval_set=(X_val, y_val)
+            )
             preds = trial_model.predict(X_val)
             cv_scores.append(evaluate_metric(tuning_metric, y_val, preds))
 
