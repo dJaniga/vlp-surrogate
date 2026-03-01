@@ -175,6 +175,7 @@ class SymbolicRegressor(VFPModel):
         best_eval_mse = float("inf")
         patience = max(self.generations // 10, 10) # 10% of generations or 10
         patience_counter = 0
+        best_islands: list[list[gp.PrimitiveTree]] | None = None
 
         for generation in tqdm(range(1, self.generations + 1)):
             for island_idx, island in enumerate(islands):
@@ -241,6 +242,7 @@ class SymbolicRegressor(VFPModel):
                         "mse": best.fitness.values[0],  # type: ignore[attr-defined]
                     },
                 )
+                best_islands = [[deepcopy(ind) for ind in island] for island in islands]
                 break
 
             if best and eval_features_std is not None and eval_targets_std is not None:
@@ -266,6 +268,9 @@ class SymbolicRegressor(VFPModel):
                 if val_mse < best_eval_mse:
                     best_eval_mse = val_mse
                     patience_counter = 0
+                    best_islands = [
+                        [deepcopy(ind) for ind in island] for island in islands
+                    ]
                 else:
                     patience_counter += 1
                     if patience_counter >= patience:
@@ -278,6 +283,9 @@ class SymbolicRegressor(VFPModel):
                             },
                         )
                         break
+            else:
+                # No validation set: treat current generation as best seen
+                best_islands = [[deepcopy(ind) for ind in island] for island in islands]
 
             logger.debug(
                 "Generation complete",
@@ -287,6 +295,11 @@ class SymbolicRegressor(VFPModel):
                     "best_len": len(best) if best else None,
                 },
             )
+
+        # Restore the best-seen island state (from the generation with lowest val_mse,
+        # or the final generation when no validation set is used).
+        if best_islands is not None:
+            islands = best_islands
 
         all_individuals = [ind for island in islands for ind in island]
 
