@@ -18,6 +18,7 @@ class XGBoostRegressor(VFPModel):
 
     _model: XGBRegressor | None = field(default=None, init=False)
     xgb_kwargs: dict[str, Any] = field(default_factory=dict)
+    seed: int | None = None
 
     def get_fit_details(self) -> dict[str, Any]:
         if self._model is None:
@@ -57,6 +58,8 @@ class XGBoostRegressor(VFPModel):
         kwargs = self.xgb_kwargs.copy()
         if eval_set is not None and "early_stopping_rounds" not in kwargs:
             kwargs["early_stopping_rounds"] = 10
+        if self.seed is not None and "random_state" not in kwargs:
+            kwargs["random_state"] = self.seed
 
         self._model = XGBRegressor(**kwargs)
         if eval_set is not None:

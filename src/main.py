@@ -1,6 +1,9 @@
 import argparse
 import logging
 from pathlib import Path
+import random
+
+import numpy as np
 
 from toolbox import setup_logging
 from vfp import run_pipeline, run_evaluator
@@ -144,6 +147,9 @@ def main():
     setup_logging()
     parser = build_parser()
     parsed_args = parser.parse_args()
+    if parsed_args.seed is not None:
+        random.seed(parsed_args.seed)
+        np.random.seed(parsed_args.seed)
 
     if parsed_args.mode == "pipeline":
         logger.info("Running in pipeline mode", extra={"Parsed args": parsed_args})
@@ -164,13 +170,13 @@ def main():
             )
         elif parsed_args.model == "linear":
             logger.info("Using linear model", extra={"model": "linear"})
-            model = create_model("linear")
+            model = create_model("linear", seed=parsed_args.seed)
         elif parsed_args.model == "xgb":
             logger.info("Using xgb model")
-            model = create_model("xgb")
+            model = create_model("xgb", seed=parsed_args.seed)
         elif parsed_args.model == "gp":
             logger.info("Using gp model")
-            model = create_model("gp")
+            model = create_model("gp", seed=parsed_args.seed)
         else:
             raise ValueError(f"Unsupported model: {parsed_args.model}")
 

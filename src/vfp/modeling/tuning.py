@@ -22,6 +22,7 @@ def tune_hyperparameters(
     n_trials: int = 20,
     cv_folds: int = 5,
     tuning_metric: str = "mean_squared_error",
+    seed: int | None = None,
 ) -> VFPModel:
     if not isinstance(model, (XGBoostRegressor, SymbolicRegressor)):
         logger.info(
@@ -30,11 +31,13 @@ def tune_hyperparameters(
         return model
 
     def objective(trial: optuna.Trial) -> float:
-        kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        kf = KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
         cv_scores = []
 
-        for idx,(train_idx, val_idx) in enumerate(kf.split(features)):
-            logger.info(f"Running CV fold {idx+1} of {cv_folds} for {type(model).__name__} hyperparameter tuning")
+        for idx, (train_idx, val_idx) in enumerate(kf.split(features)):
+            logger.info(
+                f"Running CV fold {idx + 1} of {cv_folds} for {type(model).__name__} hyperparameter tuning"
+            )
             X_train, X_val = features[train_idx], features[val_idx]
             y_train, y_val = targets[train_idx], targets[val_idx]
 
@@ -74,7 +77,8 @@ def tune_hyperparameters(
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     direction = get_metric_direction(tuning_metric)
-    study = optuna.create_study(direction=direction)
+    sampler = optuna.samplers.TPESampler(seed=seed)
+    study = optuna.create_study(direction=direction, sampler=sampler)
     logger.info(
         f"Starting hyperparameter tuning for {type(model).__name__} with {n_trials} trials, optimizing {tuning_metric} ({direction})."
     )

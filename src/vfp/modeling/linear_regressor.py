@@ -16,6 +16,7 @@ class LinearRegressor(VFPModel):
     """Simple linear regression using least squares."""
 
     coefficients: np.ndarray | None = None
+    seed: int | None = None  # Only for API consistency
 
     def get_fit_details(self) -> dict[str, Any]:
         if self.coefficients is None:

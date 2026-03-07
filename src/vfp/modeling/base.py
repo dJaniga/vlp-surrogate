@@ -43,6 +43,11 @@ class VFPModel(ABC):
 class ModelWrapper:
     model: VFPModel
     export_path: Path
+    seed: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.seed is None:
+            self.seed = getattr(self.model, "seed", None)
 
     def fit(
         self,
@@ -70,10 +75,11 @@ class ModelWrapper:
                 targets,
                 tuning_metric=tuning_metric,
                 features_name=features_name,
+                seed=self.seed,
             )
 
         X_train, X_test, y_train, y_test = train_test_split(
-            features, targets, test_size=0.2, random_state=42
+            features, targets, test_size=0.2, random_state=self.seed
         )
 
         # Ensure typed ndarrays
@@ -90,10 +96,10 @@ class ModelWrapper:
         y_pred_test = self.predict(X_test)
 
         # compute k-Fold Cross-Validation metrics
-        kf = KFold(n_splits=5, shuffle=True, random_state=42)
+        kf = KFold(n_splits=5, shuffle=True, random_state=self.seed)
         cv_metrics_list = []
         for idx, (train_idx, val_idx) in enumerate(kf.split(features)):
-            logger.info(f"Running CV fold {idx+1} of 5")
+            logger.info(f"Running CV fold {idx + 1} of 5")
             X_cv_train, X_cv_val = features[train_idx], features[val_idx]
             y_cv_train, y_cv_val = targets[train_idx], targets[val_idx]
             cv_model = copy.deepcopy(self.model)

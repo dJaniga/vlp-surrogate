@@ -129,7 +129,6 @@ class SymbolicRegressor(VFPModel):
 
         self._toolbox = build_toolbox(
             self._pset,
-            rng=rng,
             max_tree_height=self.max_tree_height,
             tournament_size=self.tournament_size,
         )
@@ -148,7 +147,7 @@ class SymbolicRegressor(VFPModel):
                 "generations": self.generations,
                 "islands": self.n_islands,
                 "island_size": island_size,
-                "parsimony_coefficient": self.parsimony_coefficient
+                "parsimony_coefficient": self.parsimony_coefficient,
             },
         )
 
@@ -173,7 +172,7 @@ class SymbolicRegressor(VFPModel):
             islands.append(island)
 
         best_eval_mse = float("inf")
-        patience = max(self.generations // 10, 10) # 10% of generations or 10
+        patience = max(self.generations // 10, 10)  # 10% of generations or 10
         patience_counter = 0
         best_islands: list[list[gp.PrimitiveTree]] | None = None
 
@@ -284,7 +283,6 @@ class SymbolicRegressor(VFPModel):
                         )
                         break
             else:
-                # No validation set: treat current generation as best seen
                 best_islands = [[deepcopy(ind) for ind in island] for island in islands]
 
             logger.debug(
