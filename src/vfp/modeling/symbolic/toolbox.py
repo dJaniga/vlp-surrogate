@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 
-import numpy as np
 from deap import base, creator, gp, tools
 
 
@@ -12,7 +11,6 @@ logger = logging.getLogger(__name__)
 def build_toolbox(
     pset: gp.PrimitiveSet,
     *,
-    rng: np.random.Generator,
     max_tree_height: int,
     tournament_size: int,
 ) -> base.Toolbox:

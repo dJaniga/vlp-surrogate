@@ -75,24 +75,25 @@ def build_seed_individuals(
 
     # 3. Quadratic in main feature + linear in others:
     #    c0 + c1*ARG0 + c2*ARG0^2 + c3*ARG1
-    square_prim = prim["_square"]
-    for main in range(min(n_features, 2)):
-        other = 1 - main
-        tokens = [
-            add_prim,
-            add_prim,
-            mul_prim,
-            _const(1.0),
-            _arg(main),
-            mul_prim,
-            _const(1.0),
-            square_prim,
-            _arg(main),
-            mul_prim,
-            _const(1.0),
-            _arg(other),
-        ]
-        seeds.append(tokens)
+    if "_square" in prim:
+        square_prim = prim["_square"]
+        for main in range(min(n_features, 2)):
+            other = 1 - main
+            tokens = [
+                add_prim,
+                add_prim,
+                mul_prim,
+                _const(1.0),
+                _arg(main),
+                mul_prim,
+                _const(1.0),
+                square_prim,
+                _arg(main),
+                mul_prim,
+                _const(1.0),
+                _arg(other),
+            ]
+            seeds.append(tokens)
 
     # 4. Product interaction: c * ARG0 * ARG1
     if n_features >= 2:

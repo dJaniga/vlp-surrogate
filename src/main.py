@@ -1,10 +1,14 @@
 import argparse
 import logging
 from pathlib import Path
+import random
+
+import numpy as np
 
 from toolbox import setup_logging
 from vfp import run_pipeline, run_evaluator
 from vfp.api import create_model
+from vfp.modeling.tuning_metrics import AVAILABLE_METRICS
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         help="VFP surrogate model type",
         required=True,
-        choices=["linear", "symbolic"],
+        choices=["linear", "symbolic", "xgb", "gp"],
         default="linear",
     )
 
@@ -49,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--ga-generations", type=int, default=80, help="GA generations."
     )
     parser_pipeline.add_argument(
-        "--ga-population", type=int, default=60, help="GA population size."
+        "--ga-population", type=int, default=100, help="GA population size."
     )
 
     parser_pipeline.add_argument(
@@ -103,6 +107,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--table-granularity", type=int, default=5, help="VFP records n-size"
     )
 
+    parser_pipeline.add_argument(
+        "--optimize-hyperparameters",
+        action="store_true",
+        help="Enable hyperparameter tuning (e.g. Optuna)",
+        default=False,
+    )
+    parser_pipeline.add_argument(
+        "--tuning-metric",
+        type=str,
+        help="Metric to optimize during hyperparameter tuning (e.g., mean_squared_error, r2_score).",
+        choices=AVAILABLE_METRICS,
+        default="mean_squared_error",
+    )
+
     parser_evaluator = subparsers.add_parser(
         "evaluator",
         help="Evaluator mode - evaluate VFP surrogate model against simulation results.",
@@ -129,6 +147,9 @@ def main():
     setup_logging()
     parser = build_parser()
     parsed_args = parser.parse_args()
+    if parsed_args.seed is not None:
+        random.seed(parsed_args.seed)
+        np.random.seed(parsed_args.seed)
 
     if parsed_args.mode == "pipeline":
         logger.info("Running in pipeline mode", extra={"Parsed args": parsed_args})
@@ -149,8 +170,13 @@ def main():
             )
         elif parsed_args.model == "linear":
             logger.info("Using linear model", extra={"model": "linear"})
-            model = create_model("linear")
-
+            model = create_model("linear", seed=parsed_args.seed)
+        elif parsed_args.model == "xgb":
+            logger.info("Using xgb model")
+            model = create_model("xgb", seed=parsed_args.seed)
+        elif parsed_args.model == "gp":
+            logger.info("Using gp model")
+            model = create_model("gp", seed=parsed_args.seed)
         else:
             raise ValueError(f"Unsupported model: {parsed_args.model}")
 
@@ -161,6 +187,8 @@ def main():
             output_folder_path=parsed_args.output_folder,
             well_data_filter_path=parsed_args.well_data_filter_file,
             table_granularity=parsed_args.table_granularity,
+            optimize_hyperparameters=parsed_args.optimize_hyperparameters,
+            tuning_metric=parsed_args.tuning_metric,
         )
         logger.info("Pipeline completed")
 

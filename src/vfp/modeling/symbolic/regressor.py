@@ -44,6 +44,7 @@ class SymbolicRegressor(VFPModel):
     migration_size: int = 3
     simplify_interval: int = 5
     parsimony_coefficient: float = 0.001
+    basic_arithmetic_only: bool = False
     pareto_front_: list[gp.PrimitiveTree] = field(default_factory=list)
     best_individual_: gp.PrimitiveTree | None = None
     _toolbox: base.Toolbox | None = None
@@ -101,6 +102,7 @@ class SymbolicRegressor(VFPModel):
         features: np.ndarray,
         targets: np.ndarray,
         features_name: tuple[str, ...] | None = None,
+        eval_set: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> SymbolicRegressor:
         rng = np.random.default_rng(self.seed)
         n_features = features.shape[1]
@@ -108,7 +110,14 @@ class SymbolicRegressor(VFPModel):
         features_std = self._standardize_features(features, fit=True)
         targets_std = self._standardize_targets(targets)
 
-        self._pset = build_primitive_set(n_features)
+        eval_features_std = None
+        eval_targets_std = None
+        if eval_set is not None:
+            eval_features_std = self._standardize_features(eval_set[0], fit=False)
+            _t = np.asarray(eval_set[1]).flatten()
+            eval_targets_std = (_t - self._target_mean) / self._target_std
+
+        self._pset = build_primitive_set(n_features, self.basic_arithmetic_only)
         self.features_name = tuple(
             features_name
             if features_name
@@ -120,7 +129,6 @@ class SymbolicRegressor(VFPModel):
 
         self._toolbox = build_toolbox(
             self._pset,
-            rng=rng,
             max_tree_height=self.max_tree_height,
             tournament_size=self.tournament_size,
         )
@@ -139,6 +147,7 @@ class SymbolicRegressor(VFPModel):
                 "generations": self.generations,
                 "islands": self.n_islands,
                 "island_size": island_size,
+                "parsimony_coefficient": self.parsimony_coefficient,
             },
         )
 
@@ -161,6 +170,11 @@ class SymbolicRegressor(VFPModel):
                 )
             island = tools.selNSGA2(island, len(island))
             islands.append(island)
+
+        best_eval_mse = float("inf")
+        patience = max(self.generations // 10, 10)  # 10% of generations or 10
+        patience_counter = 0
+        best_islands: list[list[gp.PrimitiveTree]] | None = None
 
         for generation in tqdm(range(1, self.generations + 1)):
             for island_idx, island in enumerate(islands):
@@ -218,15 +232,58 @@ class SymbolicRegressor(VFPModel):
 
             all_individuals = [ind for island in islands for ind in island]
             best = _best_by_mse(all_individuals)
+
             if best and best.fitness.values[0] < self.tolerance:  # type: ignore[attr-defined]
                 logger.info(
-                    "Early stopping reached",
+                    "Early stopping reached (train tolerance)",
                     extra={
                         "generation": generation,
                         "mse": best.fitness.values[0],  # type: ignore[attr-defined]
                     },
                 )
+                best_islands = [[deepcopy(ind) for ind in island] for island in islands]
                 break
+
+            if best and eval_features_std is not None and eval_targets_std is not None:
+                val_mse, _ = evaluate_individual(
+                    best,
+                    self._pset,
+                    eval_features_std,
+                    eval_targets_std,
+                    self.parsimony_coefficient,
+                )
+
+                logger.info(
+                    "Validation Step",
+                    extra={
+                        "generation": generation,
+                        "val_mse": val_mse,
+                        "best_val_mse": best_eval_mse
+                        if best_eval_mse != float("inf")
+                        else val_mse,
+                    },
+                )
+
+                if val_mse < best_eval_mse:
+                    best_eval_mse = val_mse
+                    patience_counter = 0
+                    best_islands = [
+                        [deepcopy(ind) for ind in island] for island in islands
+                    ]
+                else:
+                    patience_counter += 1
+                    if patience_counter >= patience:
+                        logger.info(
+                            "Early stopping reached (validation patience)",
+                            extra={
+                                "generation": generation,
+                                "val_mse": val_mse,
+                                "best_val_mse": best_eval_mse,
+                            },
+                        )
+                        break
+            else:
+                best_islands = [[deepcopy(ind) for ind in island] for island in islands]
 
             logger.debug(
                 "Generation complete",
@@ -236,6 +293,11 @@ class SymbolicRegressor(VFPModel):
                     "best_len": len(best) if best else None,
                 },
             )
+
+        # Restore the best-seen island state (from the generation with lowest val_mse,
+        # or the final generation when no validation set is used).
+        if best_islands is not None:
+            islands = best_islands
 
         all_individuals = [ind for island in islands for ind in island]
 
