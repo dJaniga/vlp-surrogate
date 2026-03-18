@@ -12,6 +12,7 @@ from tqdm import tqdm
 from vfp.modeling.base import VFPModel
 from .algebraic_simplification import simplify_island
 from .helpers import (
+    DIRECTION,
     build_seed_individuals,
     optimize_constants,
     evaluate_individual,
@@ -44,6 +45,10 @@ class SymbolicRegressor(VFPModel):
     migration_size: int = 3
     simplify_interval: int = 5
     parsimony_coefficient: float = 0.001
+    monotonicity_mode: str | None = None
+    monotonic_feature_idx: int = 0
+    monotonicity_grid_points: int = 256
+    monotonicity_penalty_lambda: float = 10000.0
     basic_arithmetic_only: bool = False
     pareto_front_: list[gp.PrimitiveTree] = field(default_factory=list)
     best_individual_: gp.PrimitiveTree | None = None
@@ -104,6 +109,8 @@ class SymbolicRegressor(VFPModel):
         features_name: tuple[str, ...] | None = None,
         eval_set: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> SymbolicRegressor:
+        monotonicity_dir = self._resolve_monotonicity_direction()
+
         rng = np.random.default_rng(self.seed)
         n_features = features.shape[1]
 
@@ -167,6 +174,10 @@ class SymbolicRegressor(VFPModel):
                     features_std,
                     targets_std,
                     self.parsimony_coefficient,
+                    self.monotonic_feature_idx,
+                    monotonicity_dir,
+                    self.monotonicity_grid_points,
+                    self.monotonicity_penalty_lambda,
                 )
             island = tools.selNSGA2(island, len(island))
             islands.append(island)
@@ -203,6 +214,10 @@ class SymbolicRegressor(VFPModel):
                             features_std,
                             targets_std,
                             self.parsimony_coefficient,
+                            self.monotonic_feature_idx,
+                            monotonicity_dir,
+                            self.monotonicity_grid_points,
+                            self.monotonicity_penalty_lambda,
                         )
 
                 islands[island_idx] = tools.selNSGA2(
@@ -220,6 +235,10 @@ class SymbolicRegressor(VFPModel):
                         targets_std,
                         self.parsimony_coefficient,
                         n_features,
+                        self.monotonic_feature_idx,
+                        monotonicity_dir,
+                        self.monotonicity_grid_points,
+                        self.monotonicity_penalty_lambda,
                     )
 
             # periodic migration
@@ -251,6 +270,10 @@ class SymbolicRegressor(VFPModel):
                     eval_features_std,
                     eval_targets_std,
                     self.parsimony_coefficient,
+                    self.monotonic_feature_idx,
+                    monotonicity_dir,
+                    self.monotonicity_grid_points,
+                    self.monotonicity_penalty_lambda,
                 )
 
                 logger.info(
@@ -310,6 +333,10 @@ class SymbolicRegressor(VFPModel):
                 targets_std,
                 self.parsimony_coefficient,
                 n_features,
+                self.monotonic_feature_idx,
+                monotonicity_dir,
+                self.monotonicity_grid_points,
+                self.monotonicity_penalty_lambda,
             )
 
         self.pareto_front_ = tools.sortNondominated(
@@ -343,6 +370,23 @@ class SymbolicRegressor(VFPModel):
             extra={"samples": int(features.shape[0])},
         )
         return predictions
+
+    def _resolve_monotonicity_direction(self) -> DIRECTION:
+        """Map human-readable monotonicity mode to internal direction enum."""
+        if self.monotonicity_mode is None:
+            return DIRECTION.NONE
+
+        normalized = self.monotonicity_mode.strip().lower()
+        if normalized in {"none", "off", "disabled"}:
+            return DIRECTION.NONE
+        if normalized in {"monotone_increase", "increase", "increasing"}:
+            return DIRECTION.INCREASING
+        if normalized in {"monotone_decrease", "decrease", "decreasing"}:
+            return DIRECTION.DECREASING
+        raise ValueError(
+            "monotonicity_mode must be one of: None, 'monotone_increase', "
+            "'monotone_decrease'"
+        )
 
 
 def _best_by_mse(population: list[gp.PrimitiveTree]) -> gp.PrimitiveTree | None:

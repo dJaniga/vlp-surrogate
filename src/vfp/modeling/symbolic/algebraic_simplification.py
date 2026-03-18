@@ -7,7 +7,7 @@ import numpy as np
 import sympy
 from deap import creator, gp
 
-from .helpers import make_constant_terminal, evaluate_individual
+from .helpers import DIRECTION, make_constant_terminal, evaluate_individual
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +209,10 @@ def _simplify_individual(
     targets: np.ndarray,
     parsimony_coefficient: float,
     n_features: int,
+    monotonic_feature_idx: int,
+    monotonicity_dir: DIRECTION,
+    monotonicity_grid_points: int,
+    monotonicity_penalty_lambda: float,
 ) -> bool:
     """Attempt to algebraically simplify an individual in-place.
 
@@ -244,6 +248,10 @@ def _simplify_individual(
             features,
             targets,
             parsimony_coefficient,
+            monotonic_feature_idx,
+            monotonicity_dir,
+            monotonicity_grid_points,
+            monotonicity_penalty_lambda,
         )
         if new_fitness[0] >= _PENALTY_FITNESS[0]:
             return False
@@ -271,6 +279,10 @@ def simplify_island(
     targets: np.ndarray,
     parsimony_coefficient: float,
     n_features: int,
+    monotonic_feature_idx: int = 0,
+    monotonicity_dir: DIRECTION = DIRECTION.NONE,
+    monotonicity_grid_points: int = 256,
+    monotonicity_penalty_lambda: float = 10000.0,
 ) -> None:
     """Apply SymPy simplification to all individuals in an island."""
     simplified_count = 0
@@ -282,6 +294,10 @@ def simplify_island(
             targets,
             parsimony_coefficient,
             n_features,
+            monotonic_feature_idx,
+            monotonicity_dir,
+            monotonicity_grid_points,
+            monotonicity_penalty_lambda,
         ):
             simplified_count += 1
     if simplified_count > 0:

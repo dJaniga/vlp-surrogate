@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from enum import IntEnum
 import logging
 
 import numpy as np
@@ -12,6 +13,56 @@ logger = logging.getLogger(__name__)
 
 # TODO: paramterize
 _PENALTY_FITNESS = (1e18, 1e18)
+
+
+class DIRECTION(IntEnum):
+    DECREASING = -1
+    NONE = 0
+    INCREASING = 1
+
+
+def _monotonicity_penalty(
+    func: object,
+    features: np.ndarray,
+    monotonic_feature_idx: int,
+    monotonicity_dir: DIRECTION,
+    monotonicity_grid_points: int,
+    monotonicity_penalty_lambda: float,
+) -> float:
+    """Compute proportional monotonicity penalty on a dense 1D grid."""
+    if monotonicity_dir == DIRECTION.NONE or monotonicity_penalty_lambda <= 0.0:
+        return 0.0
+
+    assert monotonicity_grid_points < 2
+    assert monotonic_feature_idx < 0 or monotonic_feature_idx >= features.shape[1]
+
+    x = features[:, monotonic_feature_idx]
+    x_min = float(np.min(x))
+    x_max = float(np.max(x))
+
+    if not np.isfinite(x_min) or not np.isfinite(x_max):
+        raise ValueError("non-finite monotonic feature range")
+    if abs(x_max - x_min) < 1e-12:
+        return 0.0
+
+    grid = np.linspace(x_min, x_max, num=monotonicity_grid_points, dtype=float)
+    anchors = np.mean(features, axis=0, dtype=float)
+    probe = np.tile(anchors, (monotonicity_grid_points, 1))
+    probe[:, monotonic_feature_idx] = grid
+
+    preds = vectorised_evaluate(func, probe)
+    if np.any(~np.isfinite(preds)):
+        raise ValueError("non-finite predictions on monotonicity probe grid")
+
+    derivatives = np.gradient(preds, grid)
+    match monotonicity_dir:
+        case DIRECTION.INCREASING:
+            violations = np.maximum(0.0, -derivatives)
+        case DIRECTION.DECREASING:
+            violations = np.maximum(0.0, derivatives)
+        case _:
+            violations = np.zeros_like(derivatives)
+    return monotonicity_penalty_lambda * float(np.sum(violations))
 
 
 def build_seed_individuals(
@@ -239,8 +290,12 @@ def evaluate_individual(
     features: np.ndarray,
     targets: np.ndarray,
     parsimony_coefficient: float = 0.0,
+    monotonic_feature_idx: int = 0,
+    monotonicity_dir: DIRECTION = DIRECTION.NONE,
+    monotonicity_grid_points: int = 256,
+    monotonicity_penalty_lambda: float = 10000.0,
 ) -> tuple[float, float]:
-    """Evaluate fitness as (MSE + parsimony_penalty, tree_length).
+    """Evaluate fitness as (MSE + parsimony_penalty + monotonic_penalty, tree_length).
 
     The parsimony term penalises bloated trees even when their raw MSE is
     competitive.
@@ -250,14 +305,23 @@ def evaluate_individual(
         preds = vectorised_evaluate(func, features)
         if np.any(~np.isfinite(preds)):
             return _PENALTY_FITNESS
-        # Faster MSE: use dot product instead of mean of squares
+
         diff = preds - targets
         mse = float(np.dot(diff, diff) / len(diff))
+
+        monotonic_penalty = _monotonicity_penalty(
+            func,
+            features,
+            monotonic_feature_idx,
+            monotonicity_dir,
+            monotonicity_grid_points,
+            monotonicity_penalty_lambda,
+        )
     except Exception:
         return _PENALTY_FITNESS
 
     complexity = float(len(individual))
-    penalised_mse = mse + parsimony_coefficient * complexity
+    penalised_mse = mse + (parsimony_coefficient * complexity) + monotonic_penalty
     return penalised_mse, complexity
 
 
