@@ -33,8 +33,8 @@ def _monotonicity_penalty(
     if monotonicity_dir == DIRECTION.NONE or monotonicity_penalty_lambda <= 0.0:
         return 0.0
 
-    assert monotonicity_grid_points < 2
-    assert monotonic_feature_idx < 0 or monotonic_feature_idx >= features.shape[1]
+    assert monotonicity_grid_points >= 2
+    assert 0 <= monotonic_feature_idx < features.shape[1]
 
     x = features[:, monotonic_feature_idx]
     x_min = float(np.min(x))
