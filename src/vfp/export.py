@@ -35,8 +35,8 @@ def export_VFP_manifest(vfp_file_paths: Sequence[Path], output_file_path: Path) 
 
 def _write_row(file_obj, values: np.ndarray, float_fmt: str = "{:.6g}") -> None:
     def format_value(v):
-        if isinstance(v, float):
-            return float_fmt.format(v)
+        if isinstance(v, (float, np.floating)):
+            return float_fmt.format(float(v))
         return str(v)
 
     formatted = " ".join(format_value(v) for v in values)

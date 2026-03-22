@@ -57,7 +57,7 @@ class WellDataFilter(BaseModel):
 
     @model_validator(mode="after")
     def wells_must_be_not_empty(self):
-        if self.wells is None or not self.wells:
+        if self.wells is not None and not self.wells:
             raise ValueError("Wells filter must be not empty if provided.")
         return self
 

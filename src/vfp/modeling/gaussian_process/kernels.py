@@ -69,7 +69,7 @@ class ARDKernel:
         return self.signal_variance * np.exp(-0.5 * dists_sq)
 
     def get_hyperparameters(self) -> np.ndarray:
-        ls = self._ensure_length_scales(1)  # fallback; should be set by fit
+        ls = self.length_scales if self.length_scales is not None else np.ones(1)
         return np.log(np.concatenate([[self.signal_variance], ls]))
 
     def set_hyperparameters(self, theta: np.ndarray) -> None:

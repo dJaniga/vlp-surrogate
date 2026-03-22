@@ -61,4 +61,4 @@ class VFPDetails(RootModel[Dict[str, StreamVFP]]):
                 )
             table_numbers_vfpinj.add(stream_vfp.VFPINJ.table_number)
 
-        return self.root
+        return self

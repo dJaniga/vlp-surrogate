@@ -42,7 +42,7 @@ class XGBoostRegressor(VFPModel):
         self.features_name = (
             features_name
             if features_name
-            else {f"ARG{idx}": name for idx, name in enumerate(features_name)}
+            else tuple(f"ARG{i}" for i in range(features.shape[1]))
         )
 
         logger.info(
