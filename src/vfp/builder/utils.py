@@ -6,7 +6,7 @@ def _prepare_record_indexes(records_config: pd.DataFrame) -> np.ndarray:
     unique_counts_without_flo = records_config.drop(columns=["FLO"]).nunique().to_list()
 
     grids = np.meshgrid(
-        *[np.arange(1, n + 1) for n in unique_counts_without_flo], indexing="xy"
+        *[np.arange(1, n + 1) for n in unique_counts_without_flo], indexing="ij"
     )
 
     return np.stack(grids, axis=-1, dtype=int).reshape(

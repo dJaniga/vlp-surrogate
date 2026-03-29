@@ -65,22 +65,21 @@ class ModelWrapper:
             else tuple(f"ARG{i}" for i in range(features.shape[1]))
         )
 
-        # Hyperparameter Tuning using Optuna
+        X_train, X_test, y_train, y_test = train_test_split(
+            features, targets, test_size=0.2, random_state=self.seed
+        )
+
         if optimize_hyperparameters:
             from vfp.modeling.tuning import tune_hyperparameters
 
             self.model = tune_hyperparameters(
                 self.model,
-                features,
-                targets,
+                X_train,
+                y_train,
                 tuning_metric=tuning_metric,
                 features_name=features_name,
                 seed=self.seed,
             )
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            features, targets, test_size=0.2, random_state=self.seed
-        )
 
         # Ensure typed ndarrays
         X_train = np.asarray(X_train)
