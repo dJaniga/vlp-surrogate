@@ -41,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         help="VFP surrogate model type",
         required=True,
-        choices=["linear", "symbolic", "xgb", "gp"],
+        choices=["linear", "symbolic", "xgb", "gp", "elasticnet"],
         default="linear",
     )
 
@@ -171,6 +171,9 @@ def main():
         elif parsed_args.model == "linear":
             logger.info("Using linear model", extra={"model": "linear"})
             model = create_model("linear", seed=parsed_args.seed)
+        elif parsed_args.model == "elasticnet":
+            logger.info("Using elasticnet model")
+            model = create_model("elasticnet", seed=parsed_args.seed)
         elif parsed_args.model == "xgb":
             logger.info("Using xgb model")
             model = create_model("xgb", seed=parsed_args.seed)

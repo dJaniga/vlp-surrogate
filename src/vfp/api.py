@@ -16,11 +16,12 @@ from vfp.modeling import (
     XGBoostRegressor,
     GaussianProcessRegressor,
 )
+from vfp.modeling.elastic_net_refressor import ElasticNetRegressor
 from vfp.pipeline import vfp_pipeline, VFPPROD_CONFIG, VFPINJ_CONFIG
 
 logger = logging.getLogger(__name__)
 
-ModelName = Literal["linear", "symbolic", "xgb", "gp"]
+ModelName = Literal["linear", "symbolic", "xgb", "gp", "elasticnet"]
 
 
 # -----------------------------------------------------------------------------
@@ -29,10 +30,11 @@ ModelName = Literal["linear", "symbolic", "xgb", "gp"]
 
 
 def create_model(name: ModelName, **kwargs) -> VFPModel:
-    """Factory for supported models (linear, symbolic, xgb, gp)."""
     logger.info("Creating model", extra={"model": name})
     if name == "linear":
         return LinearRegressor(**kwargs)
+    if name == "elasticnet":
+        return ElasticNetRegressor(**kwargs)
     if name == "symbolic":
         return SymbolicRegressor(**kwargs)
     if name == "xgb":

@@ -22,6 +22,7 @@ class VFPModel(ABC):
     def __init__(self) -> None:
         self.features_name: tuple[str, ...] | None
 
+    @abstractmethod
     def fit(
         self,
         features: np.ndarray,
@@ -30,6 +31,7 @@ class VFPModel(ABC):
         eval_set: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> VFPModel: ...
 
+    @abstractmethod
     def predict(self, features: np.ndarray) -> np.ndarray: ...
 
     @abstractmethod
