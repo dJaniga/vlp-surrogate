@@ -16,7 +16,7 @@ from vfp.modeling import (
     XGBoostRegressor,
     GaussianProcessRegressor,
 )
-from vfp.modeling.elastic_net_refressor import ElasticNetRegressor
+from vfp.modeling.elastic_net_regressor import ElasticNetRegressor
 from vfp.pipeline import vfp_pipeline, VFPPROD_CONFIG, VFPINJ_CONFIG
 
 logger = logging.getLogger(__name__)

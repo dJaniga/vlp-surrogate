@@ -140,6 +140,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to well data filter file [*.json]",
     )
 
+    parser_evaluator.add_argument("--seed", type=int, default=None, help="Random seed.")
+
     return parser
 
 
