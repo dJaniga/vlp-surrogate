@@ -1,4 +1,4 @@
-from vfp.modeling.symbolic.regressor import SymbolicRegressor
+from vfp.modeling.symbolic.symbolic_regressor import SymbolicRegressor
 
 __all__ = [
     "SymbolicRegressor",
