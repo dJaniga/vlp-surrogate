@@ -21,7 +21,7 @@ def tune_hyperparameters(
     targets: np.ndarray,
     features_name: tuple[str, ...],
     n_trials: int = 20,
-    cv_folds: int = 5,
+    n_splits: int = 3,
     tuning_metric: str = "mean_squared_error",
     seed: int | None = None,
 ) -> VFPModel:
@@ -32,12 +32,12 @@ def tune_hyperparameters(
         return model
 
     def objective(trial: optuna.Trial) -> float:
-        kf = KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
+        kf = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
         cv_scores = []
 
         for idx, (train_idx, val_idx) in enumerate(kf.split(features)):
             logger.info(
-                f"Running CV fold {idx + 1} of {cv_folds} for {type(model).__name__} hyperparameter tuning"
+                f"Running inner CV fold {idx + 1} of {n_splits} for {type(model).__name__} hyperparameter tuning"
             )
             X_train, X_val = features[train_idx], features[val_idx]
             y_train, y_val = targets[train_idx], targets[val_idx]
@@ -78,7 +78,9 @@ def tune_hyperparameters(
             preds = trial_model.predict(X_val)
             cv_scores.append(evaluate_metric(tuning_metric, y_val, preds))
 
-        return float(np.mean(cv_scores))
+        mean_score = float(np.mean(cv_scores))
+        logger.info(f"CV score: {mean_score}")
+        return mean_score
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     direction = get_metric_direction(tuning_metric)
@@ -95,6 +97,7 @@ def tune_hyperparameters(
     best_model = copy.deepcopy(model)
     if isinstance(best_model, XGBoostRegressor):
         best_model.xgb_kwargs.update(best_params)
+        best_model.xgb_kwargs["early_stopping_rounds"] = 10  # re-apply fixed param
     elif isinstance(best_model, SymbolicRegressor):
         best_model.parsimony_coefficient = best_params["parsimony_coefficient"]
         best_model.basic_arithmetic_only = True
