@@ -36,7 +36,7 @@ class BayesianRidgeRegressor(VFPModel):
         features_name: tuple[str, ...] | None = None,
         eval_set: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> VFPModel:
-        logger.info(
+        logger.debug(
             "Fitting Bayesian Ridge regression",
             extra={
                 "samples": int(features.shape[0]),
@@ -63,7 +63,7 @@ class BayesianRidgeRegressor(VFPModel):
         )
         self._model.fit(features, targets.ravel())
 
-        logger.info("Coefficients", extra={"coefficients": self.get_fit_details()})
+        logger.debug("Coefficients", extra={"coefficients": self.get_fit_details()})
 
         return self
 

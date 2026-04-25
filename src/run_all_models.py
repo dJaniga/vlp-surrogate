@@ -1,25 +1,13 @@
-"""
-Runner on top of `main.py` that executes the pipeline for every supported
-model type with hyperparameter optimization enabled.
-
-Usage example:
-    python run_all_models.py \
-        --input-file path/to/sim.UNSMRY \
-        --vfp-details-file path/to/vfp.json \
-        --output-folder path/to/out \
-        [--tuning-metric mean_squared_error] \
-        [--seed 42] \
-        [--models linear xgb gp]   # optional subset
-"""
-
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import random
 import shutil
 import sys
 import traceback
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -31,12 +19,34 @@ from vfp.modeling.tuning_metrics import AVAILABLE_METRICS
 
 logger = logging.getLogger(__name__)
 
-ALL_MODELS: tuple[str, ...] = ("linear", "elasticnet", "bayesian_ridge", "symbolic")
+ALL_MODELS: tuple[str, ...] = ("linear", "elasticnet", "bayesian_ridge")
+
+SELECTED_METRICS: tuple[str, ...] = (
+    "mean_squared_error",
+    "root_mean_squared_error",
+    "mean_absolute_error",
+    "r2_score",
+)
+
+
+def _detect_physical_cpu_count() -> int:
+    try:
+        import psutil  # type: ignore[import-not-found]
+
+        physical = psutil.cpu_count(logical=False)
+        if physical:
+            return int(physical)
+    except ImportError:
+        pass
+
+    logical = os.cpu_count() or 1
+    return max(1, logical // 2) if logical > 1 else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run VFP pipeline for all model types with hyperparameter optimization.",
+        description="Run VFP pipeline for every (model, metric) combination "
+        "with hyperparameter optimization, in parallel.",
         prog="vfp-surrogate-runner",
     )
     parser.add_argument(
@@ -55,7 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-folder",
         type=Path,
         required=True,
-        help="Root output folder. Each model writes to a subfolder.",
+        help="Root output folder. Each (model, metric) pair "
+        "writes to <output>/<model>/<metric>/.",
     )
     parser.add_argument(
         "--well-data-filter-file",
@@ -66,62 +77,85 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--table-granularity", type=int, default=5, help="VFP records n-size"
     )
-    parser.add_argument(
-        "--tuning-metric",
-        type=str,
-        choices=AVAILABLE_METRICS,
-        default="mean_squared_error",
-        help="Metric to optimize during hyperparameter tuning.",
-    )
     parser.add_argument("--seed", type=int, default=None, help="Random seed.")
     parser.add_argument(
-        "--models",
-        nargs="+",
-        choices=ALL_MODELS,
-        default=list(ALL_MODELS),
-        help="Subset of models to run (default: all).",
-    )
-    parser.add_argument(
-        "--continue-on-error",
-        action="store_true",
-        default=True,
-        help="Continue with the next model if one fails (default: True).",
+        "--max-workers",
+        type=int,
+        default=None,
+        help="Max parallel processes (default: physical CPU core count).",
     )
     return parser
 
 
 def _build_model(model_type: str, seed: int | None):
     """Construct a model with default constructor args; tuning will explore the space."""
-    # Hyperparameter optimization will override architectural choices,
-    # so default constructors are sufficient here.
     return create_model(model_type, seed=seed)
 
 
-def run_for_model(model_type: str, args: argparse.Namespace) -> None:
-    logger.info("=" * 72)
-    logger.info("Starting model: %s", model_type)
-    logger.info("=" * 72)
+def _run_combination_worker(
+    model_type: str,
+    metric_name: str,
+    input_file: Path,
+    vfp_details_file: Path,
+    output_folder: Path,
+    well_data_filter_file: Path | None,
+    table_granularity: int,
+    seed: int | None,
+) -> tuple[str, str, str]:
+    """
+    Worker entrypoint executed in a child process.
 
-    model_output = args.output_folder / model_type
-    model_output.mkdir(parents=True, exist_ok=True)
+    Returns (model_type, metric_name, status). Never raises — failures are
+    captured into the status string so the parent can summarize them.
+    """
+    # Each worker needs its own logging configuration.
+    setup_logging()
+    worker_logger = logging.getLogger(__name__)
 
-    model = _build_model(model_type, args.seed)
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
 
-    run_pipeline(
-        source_file_path=args.input_file,
-        vfp_details_file_path=args.vfp_details_file,
-        surrogate_model=model,
-        output_folder_path=model_output,
-        well_data_filter_path=args.well_data_filter_file,
-        table_granularity=args.table_granularity,
-        optimize_hyperparameters=True,
-        tuning_metric=args.tuning_metric,
+    combo_output = output_folder / model_type / metric_name
+    combo_output.mkdir(parents=True, exist_ok=True)
+
+    worker_logger.info(
+        "[pid=%d] Starting: model=%s | metric=%s", os.getpid(), model_type, metric_name
     )
+    try:
+        model = _build_model(model_type, seed)
+        run_pipeline(
+            source_file_path=input_file,
+            vfp_details_file_path=vfp_details_file,
+            surrogate_model=model,
+            output_folder_path=combo_output,
+            well_data_filter_path=well_data_filter_file,
+            table_granularity=table_granularity,
+            optimize_hyperparameters=True,
+            tuning_metric=metric_name,
+        )
+        return model_type, metric_name, "OK"
+    except Exception as exc:  # noqa: BLE001
+        worker_logger.error(
+            "[pid=%d] Combination model=%s metric=%s failed:\n%s",
+            os.getpid(),
+            model_type,
+            metric_name,
+            traceback.format_exc(),
+        )
+        return model_type, metric_name, f"FAILED: {exc.__class__.__name__}: {exc}"
 
 
 def main() -> int:
     setup_logging()
     args = build_parser().parse_args()
+
+    _unknown_metrics = set(SELECTED_METRICS) - set(AVAILABLE_METRICS)
+    if _unknown_metrics:
+        raise ValueError(
+            f"SELECTED_METRICS contains unknown metric(s): {sorted(_unknown_metrics)}. "
+            f"Allowed values: {AVAILABLE_METRICS}"
+        )
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -130,27 +164,67 @@ def main() -> int:
     if args.output_folder.exists():
         logger.warning("Cleaning output folder: %s", args.output_folder)
         shutil.rmtree(args.output_folder)
+    args.output_folder.mkdir(parents=True)
 
-    args.output_folder.mkdir(parents=True, exist_ok=True)
+    combinations: list[tuple[str, str]] = [
+        (m, metric) for m in ALL_MODELS for metric in SELECTED_METRICS
+    ]
+    total = len(combinations)
 
-    results: dict[str, str] = {}
-    for model_type in args.models:
-        try:
-            run_for_model(model_type, args)
-            results[model_type] = "OK"
-        except Exception as exc:  # noqa: BLE001
-            results[model_type] = f"FAILED: {exc.__class__.__name__}: {exc}"
-            logger.error("Model %s failed:\n%s", model_type, traceback.format_exc())
-            if not args.continue_on_error:
-                break
+    physical_cpus = _detect_physical_cpu_count()
+    max_workers = args.max_workers or physical_cpus
+    max_workers = max(1, min(max_workers, total))
+
+    logger.info(
+        "Running %d combination(s): %d models × %d metrics | workers=%d (physical CPUs=%d)",
+        total,
+        len(ALL_MODELS),
+        len(SELECTED_METRICS),
+        max_workers,
+        physical_cpus,
+    )
+
+    results: dict[tuple[str, str], str] = {}
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {}
+        for idx, (model_type, metric_name) in enumerate(combinations):
+            task_seed = None if args.seed is None else args.seed + idx
+            future = executor.submit(
+                _run_combination_worker,
+                model_type,
+                metric_name,
+                args.input_file,
+                args.vfp_details_file,
+                args.output_folder,
+                args.well_data_filter_file,
+                args.table_granularity,
+                task_seed,
+            )
+            futures[future] = (model_type, metric_name)
+
+        completed = 0
+        for future in as_completed(futures):
+            model_type, metric_name, status = future.result()
+            results[(model_type, metric_name)] = status
+            completed += 1
+            logger.info(
+                "[%d/%d] %-15s | %-32s -> %s",
+                completed,
+                total,
+                model_type,
+                metric_name,
+                status,
+            )
 
     logger.info("=" * 72)
-    logger.info("Run summary:")
-    for model_type, status in results.items():
-        logger.info("  %-15s %s", model_type, status)
+    logger.info("Run summary (%d combinations):", len(results))
+    for (model_type, metric_name), status in sorted(results.items()):
+        logger.info("  %-15s | %-32s %s", model_type, metric_name, status)
+    ok_count = sum(1 for v in results.values() if v == "OK")
+    logger.info("Succeeded: %d / %d", ok_count, len(results))
     logger.info("=" * 72)
 
-    return 0 if all(v == "OK" for v in results.values()) else 1
+    return 0 if ok_count == total else 1
 
 
 if __name__ == "__main__":

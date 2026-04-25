@@ -83,7 +83,7 @@ class ModelWrapper:
         for outer_idx, (outer_train_idx, outer_val_idx) in enumerate(
             outer_kf.split(features)
         ):
-            logger.info(f"Outer CV fold {outer_idx + 1}/{outer_splits}")
+            logger.debug(f"Outer CV fold {outer_idx + 1}/{outer_splits}")
 
             X_outer_train, X_outer_val = (
                 features[outer_train_idx],
@@ -136,7 +136,7 @@ class ModelWrapper:
                     scores, weights = zip(*values_and_weights)
                     nested_cv_metrics[key] = float(np.average(scores, weights=weights))
 
-        logger.info(
+        logger.debug(
             "Nested CV complete", extra={"nested_cv_metrics": nested_cv_metrics}
         )
 
@@ -170,7 +170,7 @@ class ModelWrapper:
             "nested_cv": nested_cv_metrics,  # unbiased generalization estimate
         }
 
-        logger.info("Fit diagnostics", extra={"fit_metrics": fit_metrics})
+        logger.debug("Fit diagnostics", extra={"fit_metrics": fit_metrics})
 
         # ------------------------------------------------------------------ #
         # 3. EXPORT                                                            #

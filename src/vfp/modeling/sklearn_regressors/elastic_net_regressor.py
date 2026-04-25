@@ -34,7 +34,7 @@ class ElasticNetRegressor(VFPModel):
         features_name: tuple[str, ...] | None = None,
         eval_set: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> ElasticNetRegressor:
-        logger.info(
+        logger.debug(
             "Fitting elastic net regression",
             extra={
                 "samples": int(features.shape[0]),
@@ -52,7 +52,7 @@ class ElasticNetRegressor(VFPModel):
         )
         self._model.fit(features, targets)
 
-        logger.info("Coefficients", extra={"coefficients": self.get_fit_details()})
+        logger.debug("Coefficients", extra={"coefficients": self.get_fit_details()})
 
         return self
 

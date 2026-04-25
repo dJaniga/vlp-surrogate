@@ -37,7 +37,7 @@ def tune_hyperparameters(
             BayesianRidgeRegressor,
         ),
     ):
-        logger.info(
+        logger.warning(
             f"Hyperparameter tuning not implemented for {type(model).__name__}. Returning original model."
         )
         return model
@@ -47,7 +47,7 @@ def tune_hyperparameters(
         cv_scores = []
 
         for idx, (train_idx, val_idx) in enumerate(kf.split(features)):
-            logger.info(
+            logger.debug(
                 f"Running inner CV fold {idx + 1} of {n_splits} for {type(model).__name__} hyperparameter tuning"
             )
             X_train, X_val = features[train_idx], features[val_idx]
@@ -104,7 +104,7 @@ def tune_hyperparameters(
             cv_scores.append(evaluate_metric(tuning_metric, y_val, preds))
 
         mean_score = float(np.mean(cv_scores))
-        logger.info(f"CV score: {mean_score}")
+        logger.debug(f"CV score: {mean_score}")
         return mean_score
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -117,7 +117,7 @@ def tune_hyperparameters(
     study.optimize(objective, n_trials=n_trials)
 
     best_params = study.best_params
-    logger.info(f"Best hyperparameters found: {best_params}")
+    logger.debug(f"Best hyperparameters found: {best_params}")
 
     best_model = copy.deepcopy(model)
     if isinstance(best_model, XGBoostRegressor):

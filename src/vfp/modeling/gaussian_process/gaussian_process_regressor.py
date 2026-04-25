@@ -72,7 +72,7 @@ class GaussianProcessRegressor(VFPModel):
 
         targets_flat = targets.ravel()
 
-        logger.info(
+        logger.debug(
             "Fitting Gaussian Process",
             extra={
                 "samples": n_samples,
@@ -96,7 +96,7 @@ class GaussianProcessRegressor(VFPModel):
         self._L = L
         self._alpha = cho_solve((L, lower), self._y_train)
 
-        logger.info(
+        logger.debug(
             "Gaussian Process fit complete",
             extra={
                 "kernel": self.kernel_name,
@@ -198,7 +198,7 @@ class GaussianProcessRegressor(VFPModel):
         predictions_std = K_star @ self._alpha
         predictions = self._unstandardize_predictions(predictions_std)
 
-        logger.info(
+        logger.debug(
             "Gaussian Process prediction complete",
             extra={"samples": int(features.shape[0])},
         )
@@ -233,7 +233,7 @@ class GaussianProcessRegressor(VFPModel):
         mean = self._unstandardize_predictions(mean_std)
         std = np.sqrt(var_std) * self._target_std
 
-        logger.info(
+        logger.debug(
             "Gaussian Process prediction with uncertainty complete",
             extra={"samples": int(features.shape[0])},
         )
