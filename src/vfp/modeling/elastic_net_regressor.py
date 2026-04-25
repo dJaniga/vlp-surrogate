@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 @dataclass(slots=True)
 class ElasticNetRegressor(VFPModel):
     _model: ElasticNet = field(default=None, init=False)
+    alpha: float = 1.0
+    l1_ratio: float = 0.5
     seed: int | None = None
 
     def __str__(self) -> str:

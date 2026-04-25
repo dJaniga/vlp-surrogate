@@ -7,6 +7,7 @@ import optuna
 from sklearn.model_selection import KFold
 
 from vfp.modeling.base import VFPModel
+from vfp.modeling.elastic_net_regressor import ElasticNetRegressor
 from vfp.modeling.xgboost import XGBoostRegressor
 from vfp.modeling.symbolic.regressor import SymbolicRegressor
 from vfp.modeling.tuning_metrics import evaluate_metric, get_metric_direction
@@ -24,7 +25,7 @@ def tune_hyperparameters(
     tuning_metric: str = "mean_squared_error",
     seed: int | None = None,
 ) -> VFPModel:
-    if not isinstance(model, (XGBoostRegressor, SymbolicRegressor)):
+    if not isinstance(model, (XGBoostRegressor, SymbolicRegressor, ElasticNetRegressor)):
         logger.info(
             f"Hyperparameter tuning not implemented for {type(model).__name__}. Returning original model."
         )
@@ -67,6 +68,10 @@ def tune_hyperparameters(
                 )
                 trial_model.basic_arithmetic_only = True
 
+            elif isinstance(trial_model, ElasticNetRegressor):
+                trial_model.alpha = trial.suggest_float("alpha", 0.0001, 0.01, log=True)
+                trial_model.l1_ratio = trial.suggest_float("l1_ratio", 0.0, 1.0)
+
             trial_model.fit(
                 X_train, y_train, features_name=features_name, eval_set=(X_val, y_val)
             )
@@ -93,5 +98,8 @@ def tune_hyperparameters(
     elif isinstance(best_model, SymbolicRegressor):
         best_model.parsimony_coefficient = best_params["parsimony_coefficient"]
         best_model.basic_arithmetic_only = True
+    elif isinstance(best_model, ElasticNetRegressor):
+        best_model.alpha = best_params["alpha"]
+        best_model.l1_ratio = best_params["l1_ratio"]
 
     return best_model
