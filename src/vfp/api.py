@@ -271,7 +271,7 @@ def run_pipeline(
 
     if manifest_content:
         manifest_path = Path(output_folder_path, "VFP_manifest.txt")
-        logger.info(
+        logger.debug(
             "Exporting VFP manifest",
             extra={"ManifestPath": str(manifest_path)},
         )

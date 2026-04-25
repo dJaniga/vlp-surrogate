@@ -111,7 +111,7 @@ def tune_hyperparameters(
     direction = get_metric_direction(tuning_metric)
     sampler = optuna.samplers.TPESampler(seed=seed)
     study = optuna.create_study(direction=direction, sampler=sampler)
-    logger.info(
+    logger.debug(
         f"Starting hyperparameter tuning for {type(model).__name__} with {n_trials} trials, optimizing {tuning_metric} ({direction})."
     )
     study.optimize(objective, n_trials=n_trials)

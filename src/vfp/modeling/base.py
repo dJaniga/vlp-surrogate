@@ -144,7 +144,7 @@ class ModelWrapper:
         # 2. FINAL MODEL — trained on ALL data                                #
         #    Hyperparameters tuned on all data via inner CV (no holdout leak) #
         # ------------------------------------------------------------------ #
-        logger.info("Training final model on full dataset")
+        logger.debug("Training final model on full dataset")
 
         if optimize_hyperparameters:
             from vfp.modeling.tuning import tune_hyperparameters
@@ -171,6 +171,9 @@ class ModelWrapper:
         }
 
         logger.debug("Fit diagnostics", extra={"fit_metrics": fit_metrics})
+        logger.info(
+            f"Model {self.model} fit completed with target metric {tuning_metric}: {train_metrics[tuning_metric]}"
+        )
 
         # ------------------------------------------------------------------ #
         # 3. EXPORT                                                            #

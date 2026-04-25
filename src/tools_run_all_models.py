@@ -207,7 +207,7 @@ def main() -> int:
             model_type, metric_name, status = future.result()
             results[(model_type, metric_name)] = status
             completed += 1
-            logger.info(
+            logger.debug(
                 "[%d/%d] %-15s | %-32s -> %s",
                 completed,
                 total,
