@@ -60,7 +60,7 @@ def tune_hyperparameters(
 
             if isinstance(trial_model, XGBoostRegressor):
                 kwargs = {
-                    "max_depth": trial.suggest_int("max_depth", 1, 3),
+                    "max_depth": trial.suggest_int("max_depth", 1, 5),
                     "subsample": trial.suggest_float("subsample", 0.5, 0.8),
                     "colsample_bytree": trial.suggest_float(
                         "colsample_bytree", 0.5, 0.8
