@@ -9,19 +9,21 @@ from typing import Literal
 from readers import initialize_reader_from_path, WellDataFilter
 from vfp.details import VFPDetails
 from vfp.export import export_VFP_manifest
-from vfp.modeling import (
-    VFPModel,
+from vfp.modeling import VFPModel
+from vfp.modeling.gaussian_process import GaussianProcessRegressor
+from vfp.modeling.sklearn_regressors import (
     LinearRegressor,
-    SymbolicRegressor,
+    ElasticNetRegressor,
     XGBoostRegressor,
-    GaussianProcessRegressor,
+    BayesianRidgeRegressor,
 )
-from vfp.modeling.elastic_net_regressor import ElasticNetRegressor
+from vfp.modeling.symbolic import SymbolicRegressor
+
 from vfp.pipeline import vfp_pipeline, VFPPROD_CONFIG, VFPINJ_CONFIG
 
 logger = logging.getLogger(__name__)
 
-ModelName = Literal["linear", "symbolic", "xgb", "gp", "elasticnet"]
+ModelName = Literal["linear", "symbolic", "xgb", "gp", "elasticnet", "bayesian_ridge"]
 
 
 # -----------------------------------------------------------------------------
@@ -41,6 +43,8 @@ def create_model(name: ModelName, **kwargs) -> VFPModel:
         return XGBoostRegressor(**kwargs)
     if name == "gp":
         return GaussianProcessRegressor(**kwargs)
+    if name == "bayesian_ridge":
+        return BayesianRidgeRegressor(**kwargs)
     raise ValueError(f"Unsupported model name: {name}")
 
 
@@ -267,7 +271,7 @@ def run_pipeline(
 
     if manifest_content:
         manifest_path = Path(output_folder_path, "VFP_manifest.txt")
-        logger.info(
+        logger.debug(
             "Exporting VFP manifest",
             extra={"ManifestPath": str(manifest_path)},
         )

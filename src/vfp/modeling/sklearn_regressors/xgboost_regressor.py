@@ -45,7 +45,7 @@ class XGBoostRegressor(VFPModel):
             else tuple(f"ARG{i}" for i in range(features.shape[1]))
         )
 
-        logger.info(
+        logger.debug(
             "Fitting XGBoost regression",
             extra={
                 "samples": int(features.shape[0]),
@@ -70,14 +70,14 @@ class XGBoostRegressor(VFPModel):
                 verbose=0,
             )
             if hasattr(self._model, "best_iteration"):
-                logger.info(
+                logger.debug(
                     "XGBoost early stopping",
                     extra={"best_iteration": getattr(self._model, "best_iteration")},
                 )
         else:
             self._model.fit(features, targets)
 
-        logger.info(
+        logger.debug(
             "Feature Importances", extra={"importances": self.get_fit_details()}
         )
 

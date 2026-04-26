@@ -33,7 +33,7 @@ class LinearRegressor(VFPModel):
         features_name: tuple[str, ...] | None = None,
         eval_set: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> LinearRegressor:
-        logger.info(
+        logger.debug(
             "Fitting linear regression",
             extra={
                 "samples": int(features.shape[0]),
@@ -49,14 +49,14 @@ class LinearRegressor(VFPModel):
             else tuple(f"ARG{i}" for i in range(features.shape[1]))
         )
 
-        logger.info("Coefficients", extra={"coefficients": self.get_fit_details()})
+        logger.debug("Coefficients", extra={"coefficients": self.get_fit_details()})
 
         return self
 
     def predict(self, features: np.ndarray) -> np.ndarray:
         if self.coefficients is None:
             raise ValueError("Model has not been fit yet.")
-        logger.info(
+        logger.debug(
             "Predicting with linear regression",
             extra={"samples": int(features.shape[0])},
         )

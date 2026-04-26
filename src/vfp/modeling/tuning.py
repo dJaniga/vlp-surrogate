@@ -7,9 +7,12 @@ import optuna
 from sklearn.model_selection import KFold
 
 from vfp.modeling.base import VFPModel
-from vfp.modeling.elastic_net_regressor import ElasticNetRegressor
-from vfp.modeling.xgboost import XGBoostRegressor
-from vfp.modeling.symbolic.regressor import SymbolicRegressor
+from vfp.modeling.sklearn_regressors.bayesian_ridge_regressor import (
+    BayesianRidgeRegressor,
+)
+from vfp.modeling.sklearn_regressors.elastic_net_regressor import ElasticNetRegressor
+from vfp.modeling.sklearn_regressors.xgboost_regressor import XGBoostRegressor
+from vfp.modeling.symbolic.symbolic_regressor import SymbolicRegressor
 from vfp.modeling.tuning_metrics import evaluate_metric, get_metric_direction
 
 logger = logging.getLogger(__name__)
@@ -25,8 +28,16 @@ def tune_hyperparameters(
     tuning_metric: str = "mean_squared_error",
     seed: int | None = None,
 ) -> VFPModel:
-    if not isinstance(model, (XGBoostRegressor, SymbolicRegressor, ElasticNetRegressor)):
-        logger.info(
+    if not isinstance(
+        model,
+        (
+            XGBoostRegressor,
+            SymbolicRegressor,
+            ElasticNetRegressor,
+            BayesianRidgeRegressor,
+        ),
+    ):
+        logger.warning(
             f"Hyperparameter tuning not implemented for {type(model).__name__}. Returning original model."
         )
         return model
@@ -36,7 +47,7 @@ def tune_hyperparameters(
         cv_scores = []
 
         for idx, (train_idx, val_idx) in enumerate(kf.split(features)):
-            logger.info(
+            logger.debug(
                 f"Running inner CV fold {idx + 1} of {n_splits} for {type(model).__name__} hyperparameter tuning"
             )
             X_train, X_val = features[train_idx], features[val_idx]
@@ -72,6 +83,20 @@ def tune_hyperparameters(
                 trial_model.alpha = trial.suggest_float("alpha", 0.0001, 0.01, log=True)
                 trial_model.l1_ratio = trial.suggest_float("l1_ratio", 0.0, 1.0)
 
+            elif isinstance(trial_model, BayesianRidgeRegressor):
+                trial_model.alpha_1 = trial.suggest_float(
+                    "alpha_1", 1e-6, 0.1, log=True
+                )
+                trial_model.alpha_2 = trial.suggest_float(
+                    "alpha_2", 1e-6, 0.1, log=True
+                )
+                trial_model.lambda_1 = trial.suggest_float(
+                    "lambda_1", 1e-6, 0.1, log=True
+                )
+                trial_model.lambda_2 = trial.suggest_float(
+                    "lambda_2", 1e-6, 0.1, log=True
+                )
+
             trial_model.fit(
                 X_train, y_train, features_name=features_name, eval_set=(X_val, y_val)
             )
@@ -79,20 +104,20 @@ def tune_hyperparameters(
             cv_scores.append(evaluate_metric(tuning_metric, y_val, preds))
 
         mean_score = float(np.mean(cv_scores))
-        logger.info(f"CV score: {mean_score}")
+        logger.debug(f"CV score: {mean_score}")
         return mean_score
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     direction = get_metric_direction(tuning_metric)
     sampler = optuna.samplers.TPESampler(seed=seed)
     study = optuna.create_study(direction=direction, sampler=sampler)
-    logger.info(
+    logger.debug(
         f"Starting hyperparameter tuning for {type(model).__name__} with {n_trials} trials, optimizing {tuning_metric} ({direction})."
     )
     study.optimize(objective, n_trials=n_trials)
 
     best_params = study.best_params
-    logger.info(f"Best hyperparameters found: {best_params}")
+    logger.debug(f"Best hyperparameters found: {best_params}")
 
     best_model = copy.deepcopy(model)
     if isinstance(best_model, XGBoostRegressor):

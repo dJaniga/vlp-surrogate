@@ -27,9 +27,14 @@ class ElasticNetRegressor(VFPModel):
         coef = dict(zip(self.features_name[1:], self._model.coef_))
         return {**intercept, **coef}
 
-    def fit(self, features: np.ndarray, targets: np.ndarray, features_name: tuple[str, ...] | None = None,
-            eval_set: tuple[np.ndarray, np.ndarray] | None = None) -> ElasticNetRegressor:
-        logger.info(
+    def fit(
+        self,
+        features: np.ndarray,
+        targets: np.ndarray,
+        features_name: tuple[str, ...] | None = None,
+        eval_set: tuple[np.ndarray, np.ndarray] | None = None,
+    ) -> ElasticNetRegressor:
+        logger.debug(
             "Fitting elastic net regression",
             extra={
                 "samples": int(features.shape[0]),
@@ -42,10 +47,12 @@ class ElasticNetRegressor(VFPModel):
             if features_name
             else tuple(f"ARG{i}" for i in range(features.shape[1]))
         )
-        self._model = ElasticNet(random_state=self.seed)
+        self._model = ElasticNet(
+            random_state=self.seed, alpha=self.alpha, l1_ratio=self.l1_ratio
+        )
         self._model.fit(features, targets)
 
-        logger.info("Coefficients", extra={"coefficients": self.get_fit_details()})
+        logger.debug("Coefficients", extra={"coefficients": self.get_fit_details()})
 
         return self
 

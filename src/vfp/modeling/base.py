@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -80,11 +80,19 @@ class ModelWrapper:
         outer_metrics_list: list[dict] = []
         outer_fold_sizes: list[int] = []
 
-        for outer_idx, (outer_train_idx, outer_val_idx) in enumerate(outer_kf.split(features)):
-            logger.info(f"Outer CV fold {outer_idx + 1}/{outer_splits}")
+        for outer_idx, (outer_train_idx, outer_val_idx) in enumerate(
+            outer_kf.split(features)
+        ):
+            logger.debug(f"Outer CV fold {outer_idx + 1}/{outer_splits}")
 
-            X_outer_train, X_outer_val = features[outer_train_idx], features[outer_val_idx]
-            y_outer_train, y_outer_val = targets[outer_train_idx], targets[outer_val_idx]
+            X_outer_train, X_outer_val = (
+                features[outer_train_idx],
+                features[outer_val_idx],
+            )
+            y_outer_train, y_outer_val = (
+                targets[outer_train_idx],
+                targets[outer_val_idx],
+            )
 
             fold_model = copy.deepcopy(self.model)
 
@@ -110,7 +118,9 @@ class ModelWrapper:
             )
 
             y_outer_pred = fold_model.predict(X_outer_val)
-            outer_metrics_list.append(run_all_regression_metrics(y_outer_val, y_outer_pred))
+            outer_metrics_list.append(
+                run_all_regression_metrics(y_outer_val, y_outer_pred)
+            )
             outer_fold_sizes.append(len(outer_val_idx))
 
         # Weighted average across outer folds (accounts for unequal fold sizes)
@@ -126,13 +136,15 @@ class ModelWrapper:
                     scores, weights = zip(*values_and_weights)
                     nested_cv_metrics[key] = float(np.average(scores, weights=weights))
 
-        logger.info("Nested CV complete", extra={"nested_cv_metrics": nested_cv_metrics})
+        logger.debug(
+            "Nested CV complete", extra={"nested_cv_metrics": nested_cv_metrics}
+        )
 
         # ------------------------------------------------------------------ #
         # 2. FINAL MODEL — trained on ALL data                                #
         #    Hyperparameters tuned on all data via inner CV (no holdout leak) #
         # ------------------------------------------------------------------ #
-        logger.info("Training final model on full dataset")
+        logger.debug("Training final model on full dataset")
 
         if optimize_hyperparameters:
             from vfp.modeling.tuning import tune_hyperparameters
@@ -154,11 +166,14 @@ class ModelWrapper:
         train_metrics = run_all_regression_metrics(targets, y_pred_train_all)
 
         fit_metrics = {
-            "train_resubstitution": train_metrics,   # optimistic, diagnostic only
-            "nested_cv": nested_cv_metrics,          # unbiased generalization estimate
+            "train_resubstitution": train_metrics,  # optimistic, diagnostic only
+            "nested_cv": nested_cv_metrics,  # unbiased generalization estimate
         }
 
-        logger.info("Fit diagnostics", extra={"fit_metrics": fit_metrics})
+        logger.debug("Fit diagnostics", extra={"fit_metrics": fit_metrics})
+        logger.info(
+            f"Model {self.model} fit completed with target metric {tuning_metric}: {train_metrics[tuning_metric]}"
+        )
 
         # ------------------------------------------------------------------ #
         # 3. EXPORT                                                            #
@@ -166,7 +181,10 @@ class ModelWrapper:
         self.export_path.mkdir(parents=True, exist_ok=True)
 
         with open(
-            Path(self.export_path, f"{str(self.model)}_fit_results").with_suffix(".json"), "w"
+            Path(self.export_path, f"{str(self.model)}_fit_results").with_suffix(
+                ".json"
+            ),
+            "w",
         ) as f:
             json.dump(fit_metrics, f, indent=4)
 
@@ -174,14 +192,23 @@ class ModelWrapper:
             pd.DataFrame(fit_metrics).reset_index().rename(columns={"index": "Metric"})
         )
         metrics_df.to_csv(
-            Path(self.export_path, f"{str(self.model)}_fit_results").with_suffix(".csv"),
+            Path(self.export_path, f"{str(self.model)}_fit_results").with_suffix(
+                ".csv"
+            ),
             index=False,
         )
 
         with open(
-            Path(self.export_path, f"{str(self.model)}_fit_details").with_suffix(".json"), "wb"
+            Path(self.export_path, f"{str(self.model)}_fit_details").with_suffix(
+                ".json"
+            ),
+            "wb",
         ) as f:
-            f.write(orjson.dumps(self.model.get_fit_details(), option=orjson.OPT_SERIALIZE_NUMPY))
+            f.write(
+                orjson.dumps(
+                    self.model.get_fit_details(), option=orjson.OPT_SERIALIZE_NUMPY
+                )
+            )
 
         # Export predictions from the final model on full data
         y_pred_all = self.predict(features)
