@@ -4,6 +4,7 @@ import copy
 import logging
 import numpy as np
 import optuna
+
 from sklearn.model_selection import KFold
 
 from vfp.modeling.base import VFPModel
@@ -13,6 +14,7 @@ from vfp.modeling.sklearn_regressors.bayesian_ridge_regressor import (
 from vfp.modeling.sklearn_regressors.elastic_net_regressor import ElasticNetRegressor
 from vfp.modeling.sklearn_regressors.xgboost_regressor import XGBoostRegressor
 from vfp.modeling.symbolic.symbolic_regressor import SymbolicRegressor
+from vfp.modeling.sklearn_regressors.huber_regressor import HuberRegressor
 from vfp.modeling.tuning_metrics import evaluate_metric, get_metric_direction
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ def tune_hyperparameters(
             SymbolicRegressor,
             ElasticNetRegressor,
             BayesianRidgeRegressor,
+            HuberRegressor,
         ),
     ):
         logger.warning(
@@ -96,6 +99,9 @@ def tune_hyperparameters(
                 trial_model.lambda_2 = trial.suggest_float(
                     "lambda_2", 1e-6, 0.1, log=True
                 )
+            elif isinstance(trial_model, HuberRegressor):
+                trial_model.epsilon = trial.suggest_float("epsilon", 1, 1000, log=True)
+                trial_model.alpha = trial.suggest_float("alpha", 1e-6, 1000, log=True)
 
             trial_model.fit(
                 X_train, y_train, features_name=features_name, eval_set=(X_val, y_val)
@@ -120,14 +126,23 @@ def tune_hyperparameters(
     logger.debug(f"Best hyperparameters found: {best_params}")
 
     best_model = copy.deepcopy(model)
+
     if isinstance(best_model, XGBoostRegressor):
         best_model.xgb_kwargs.update(best_params)
-        best_model.xgb_kwargs["early_stopping_rounds"] = 10  # re-apply fixed param
+        best_model.xgb_kwargs["early_stopping_rounds"] = 10
     elif isinstance(best_model, SymbolicRegressor):
         best_model.parsimony_coefficient = best_params["parsimony_coefficient"]
         best_model.basic_arithmetic_only = True
     elif isinstance(best_model, ElasticNetRegressor):
         best_model.alpha = best_params["alpha"]
         best_model.l1_ratio = best_params["l1_ratio"]
+    elif isinstance(best_model, BayesianRidgeRegressor):
+        best_model.alpha_1 = best_params["alpha_1"]
+        best_model.alpha_2 = best_params["alpha_2"]
+        best_model.lambda_1 = best_params["lambda_1"]
+        best_model.lambda_2 = best_params["lambda_2"]
+    elif isinstance(best_model, HuberRegressor):
+        best_model.epsilon = best_params["epsilon"]
+        best_model.alpha = best_params["alpha"]
 
     return best_model
