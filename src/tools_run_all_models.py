@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 ALL_MODELS: tuple[str, ...] = ("linear", "elasticnet", "bayesian_ridge", "huber")
 
 SELECTED_METRICS: tuple[str, ...] = (
-    "mean_squared_error",
-    "root_mean_squared_error",
-    "mean_absolute_error",
+    "mean_absolute_percentage_error",
+    "root_mean_squared_log_error",
+    "median_absolute_error",
     "r2_score",
 )
 
