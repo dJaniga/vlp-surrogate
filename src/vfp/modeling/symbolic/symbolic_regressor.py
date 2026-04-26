@@ -391,7 +391,7 @@ class SymbolicRegressor(VFPModel):
                     else:
                         patience_counter += 1
                         if patience_counter >= patience:
-                            logger.info(
+                            logger.debug(
                                 "Early stopping reached (validation patience)",
                                 extra={
                                     "generation": generation,
@@ -450,7 +450,7 @@ class SymbolicRegressor(VFPModel):
         # Drop the cache after fit to free memory
         self._fitness_cache.clear()
 
-        logger.info("Symbolic regression complete", extra=self.get_fit_details())
+        logger.debug("Symbolic regression complete", extra=self.get_fit_details())
         return self
 
     # ---- predict (unchanged) -----------------------------------------------
@@ -461,7 +461,7 @@ class SymbolicRegressor(VFPModel):
         func = gp.compile(self.best_individual_, self._pset)
         predictions_std = vectorised_evaluate(func, features_std)
         predictions = self._unstandardize_predictions(predictions_std)
-        logger.info(
+        logger.debug(
             "Symbolic prediction complete",
             extra={"samples": int(features.shape[0])},
         )
