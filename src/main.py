@@ -193,7 +193,7 @@ def main():
         elif parsed_args.model == "bayesian_ridge":
             logger.info("Using bayesian ridge model")
             model = create_model("bayesian_ridge", seed=parsed_args.seed)
-        elif parsed_args.model == "huber_regressor":
+        elif parsed_args.model == "huber":
             model = create_model("huber", seed=parsed_args.seed)
         else:
             raise ValueError(f"Unsupported model: {parsed_args.model}")
