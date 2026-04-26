@@ -25,7 +25,7 @@ from vfp.pipeline import vfp_pipeline, VFPPROD_CONFIG, VFPINJ_CONFIG
 logger = logging.getLogger(__name__)
 
 ModelName = Literal[
-    "linear", "symbolic", "xgb", "gp", "elasticnet", "bayesian_ridge", "huber_regressor"
+    "linear", "symbolic", "xgb", "gp", "elasticnet", "bayesian_ridge", "huber"
 ]
 
 
@@ -48,7 +48,7 @@ def create_model(name: ModelName, **kwargs) -> VFPModel:
         return GaussianProcessRegressor(**kwargs)
     if name == "bayesian_ridge":
         return BayesianRidgeRegressor(**kwargs)
-    if name == "huber_regressor":
+    if name == "huber":
         return HuberRegressor(**kwargs)
     raise ValueError(f"Unsupported model name: {name}")
 

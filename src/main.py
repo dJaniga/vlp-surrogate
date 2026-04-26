@@ -48,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
             "gp",
             "elasticnet",
             "bayesian_ridge",
-            "huber_regressor",
+            "huber",
         ],
         default="linear",
     )
@@ -194,7 +194,7 @@ def main():
             logger.info("Using bayesian ridge model")
             model = create_model("bayesian_ridge", seed=parsed_args.seed)
         elif parsed_args.model == "huber_regressor":
-            model = create_model("huber_regressor", seed=parsed_args.seed)
+            model = create_model("huber", seed=parsed_args.seed)
         else:
             raise ValueError(f"Unsupported model: {parsed_args.model}")
 
