@@ -1,4 +1,6 @@
 import copy
+import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -15,6 +17,7 @@ from vfp.preprocess import (
 )
 from vfp.preprocess.filters import filter_valid_operating_conditions
 
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class VFPPipelineConfig:
@@ -55,6 +58,7 @@ def vfp_pipeline(
 ) -> VFPTable | None:
     fit_results_export_path = output_file_path.with_suffix("")
 
+    start_time = time.perf_counter()
     table = _pipeline(
         reference_model=reference_model,
         well_data=well_data,
@@ -69,6 +73,8 @@ def vfp_pipeline(
         optimize_hyperparameters=optimize_hyperparameters,
         tuning_metric=tuning_metric,
     )
+    elapsed = time.perf_counter() - start_time
+    logger.info("VFP pipeline finished in %.3f s", elapsed)
 
     if table is None:
         return None
