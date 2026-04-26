@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
@@ -290,40 +290,43 @@ class SymbolicRegressor(VFPModel):
         best_islands_snapshot: list[list[gp.PrimitiveTree]] | None = None
 
         # Per-island RNGs for thread safety
-        island_rngs = [
-            np.random.default_rng(rng.integers(0, 2**63 - 1))
+        island_rng_seeds = [
+            int(rng.integers(0, 2 ** 63 - 1))
             for _ in range(self.n_islands)
         ]
 
-        executor: ThreadPoolExecutor | None = None
+        executor: ProcessPoolExecutor | None = None
         if self.parallel_islands and self.n_islands > 1:
-            executor = ThreadPoolExecutor(max_workers=self.n_islands)
+            executor = ProcessPoolExecutor(max_workers=self.n_islands)
 
         try:
             for generation in tqdm(range(1, self.generations + 1)):
                 # ---- evolve all islands (parallel or serial) ---------------
                 if executor is not None:
-                    futures = [
-                        executor.submit(
-                            self._evolve_one_island,
+                    worker_args = [
+                        (
                             islands[i],
                             island_size,
                             features_std,
                             targets_std,
-                            island_rngs[i],
+                            self._pset,
+                            self.max_tree_height,  # ← replaces self._toolbox
+                            self.tournament_size,  # ← replaces self._toolbox
+                            self.crossover_rate,
+                            self.mutation_rate,
+                            self.const_opt_top_k_ratio,
+                            self.parsimony_coefficient,
+                            dict(self._fitness_cache),
+                            island_rng_seeds[i],
                         )
                         for i in range(self.n_islands)
                     ]
-                    islands = [f.result() for f in futures]
-                else:
-                    for i in range(self.n_islands):
-                        islands[i] = self._evolve_one_island(
-                            islands[i],
-                            island_size,
-                            features_std,
-                            targets_std,
-                            island_rngs[i],
-                        )
+                    islands = list(executor.map(_evolve_island_worker, worker_args))
+                    # Refresh rng seeds each generation
+                    island_rng_seeds = [
+                        int(rng.integers(0, 2 ** 63 - 1))
+                        for _ in range(self.n_islands)
+                    ]
 
                 # ---- periodic simplification (Pareto-front only) ----------
                 if (
@@ -496,3 +499,63 @@ def _best_by_mse_across_islands(
                 best_mse = mse
                 best = ind
     return best
+
+def _evolve_island_worker(
+    args: tuple,
+) -> list[gp.PrimitiveTree]:
+    """Module-level worker for ProcessPoolExecutor (must be picklable)."""
+    (
+        island,
+        island_size,
+        features_std,
+        targets_std,
+        pset,
+        max_tree_height,      # ← pass primitives config instead of toolbox
+        tournament_size,      # ← same
+        crossover_rate,
+        mutation_rate,
+        const_opt_top_k_ratio,
+        parsimony_coefficient,
+        fitness_cache,
+        rng_seed,
+    ) = args
+
+    # Rebuild toolbox inside the worker — avoids pickling DEAP's wrapped functions
+    toolbox = build_toolbox(pset, max_tree_height=max_tree_height, tournament_size=tournament_size)
+    rng = np.random.default_rng(rng_seed)
+
+    def _eval_cached(ind):
+        key = _tree_key(ind)
+        if key in fitness_cache:
+            return fitness_cache[key]
+        fit = evaluate_individual(ind, pset, features_std, targets_std, parsimony_coefficient)
+        fitness_cache[key] = fit
+        return fit
+
+    offspring = toolbox.select(island, len(island))
+    offspring = [_shallow_clone(ind) for ind in offspring]
+
+    for c1, c2 in zip(offspring[::2], offspring[1::2]):
+        if rng.random() < crossover_rate:
+            toolbox.mate(c1, c2)
+            if c1.fitness.valid: del c1.fitness.values
+            if c2.fitness.valid: del c2.fitness.values
+
+    for mutant in offspring:
+        if rng.random() < mutation_rate:
+            toolbox.mutate(mutant)
+            if mutant.fitness.valid: del mutant.fitness.values
+
+    for child in offspring:
+        if not child.fitness.valid:
+            child.fitness.values = _eval_cached(child)
+
+    survivors = tools.selNSGA2(island + offspring, island_size)
+
+    top_k = max(1, int(island_size * const_opt_top_k_ratio))
+    elite = sorted(survivors, key=lambda i: i.fitness.values[0])[:top_k]
+    for ind in elite:
+        optimize_constants(ind, pset, features_std, targets_std)
+        ind.fitness.values = _eval_cached(ind)
+
+    return survivors
