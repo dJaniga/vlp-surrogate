@@ -41,7 +41,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         help="VFP surrogate model type",
         required=True,
-        choices=["linear", "symbolic", "xgb", "gp", "elasticnet", "bayesian_ridge"],
+        choices=[
+            "linear",
+            "symbolic",
+            "xgb",
+            "gp",
+            "elasticnet",
+            "bayesian_ridge",
+            "huber_regressor",
+        ],
         default="linear",
     )
 
@@ -185,6 +193,8 @@ def main():
         elif parsed_args.model == "bayesian_ridge":
             logger.info("Using bayesian ridge model")
             model = create_model("bayesian_ridge", seed=parsed_args.seed)
+        elif parsed_args.model == "huber_regressor":
+            model = create_model("huber_regressor", seed=parsed_args.seed)
         else:
             raise ValueError(f"Unsupported model: {parsed_args.model}")
 
