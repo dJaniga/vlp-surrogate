@@ -131,22 +131,18 @@ def build_seed_individuals(
 
 
 def vectorised_evaluate(func: object, features: np.ndarray) -> np.ndarray:
-    """Evaluate a compiled GP function over all feature rows."""
     try:
-        # Pre-allocate column views (zero-copy)
         n_cols = features.shape[1]
         columns = [features[:, i] for i in range(n_cols)]
-        result = func(*columns)  # type: ignore[operator]
+        result = func(*columns)
         if result is None:
             return _safe_evaluate_rows(func, features)
-        arr = np.asarray(result, dtype=float)
+        arr = np.asarray(result, dtype=np.float64)
         if arr.shape != (features.shape[0],):
-            # scalar result (constant tree) -- broadcast
-            arr = np.full(features.shape[0], float(arr), dtype=float)
-        # Faster finite check: use bitwise operations
-        if not (np.isnan(arr).any() or np.isinf(arr).any()):
+            arr = np.full(features.shape[0], float(arr), dtype=np.float64)
+        # np.all on isfinite short-circuits at C level
+        if np.all(np.isfinite(arr)):
             return arr
-        # some non-finite values, fall back
         return _safe_evaluate_rows(func, features)
     except Exception:
         return _safe_evaluate_rows(func, features)
@@ -178,6 +174,19 @@ def make_constant_terminal(value: float) -> gp.Terminal:
     # produces a plain literal like 1.0 rather than np.float64(1.0).
     return gp.Terminal(float(value), False, object)
 
+_COMPILE_CACHE: dict[str, object] = {}
+_COMPILE_CACHE_MAX = 20_000
+
+
+def _compile_cached(individual: gp.PrimitiveTree, pset: gp.PrimitiveSet) -> object:
+    key = str(individual)
+    func = _COMPILE_CACHE.get(key)
+    if func is None:
+        func = gp.compile(individual, pset)
+        if len(_COMPILE_CACHE) < _COMPILE_CACHE_MAX:
+            _COMPILE_CACHE[key] = func
+    return func
+
 
 def optimize_constants(
     individual: gp.PrimitiveTree,
@@ -185,7 +194,6 @@ def optimize_constants(
     features: np.ndarray,
     targets: np.ndarray,
 ) -> None:
-    """Fine-tune ephemeral constants in the individual via Nelder-Mead."""
     indices = [
         idx
         for idx, node in enumerate(individual)
@@ -195,43 +203,36 @@ def optimize_constants(
         return
 
     initial = np.array([float(individual[idx].value) for idx in indices], dtype=float)
-
-    # Pre-compute squared differences for faster MSE calculation
-    targets_cached = targets  # Avoid repeated attribute access
+    inv_n = 1.0 / len(targets)
+    diff_buf = np.empty(len(targets), dtype=np.float64)  # reusable buffer
 
     def objective(constants: np.ndarray) -> float:
-        for idx, value in zip(
-            indices, constants, strict=False
-        ):  # strict=False is faster
-            individual[idx] = make_constant_terminal(value)
-        func = gp.compile(individual, pset)
-        preds = vectorised_evaluate(func, features)
-        if np.any(~np.isfinite(preds)):
+        for idx, value in zip(indices, constants, strict=False):
+            individual[idx] = make_constant_terminal(float(value))
+        try:
+            func = _compile_cached(individual, pset)
+            preds = vectorised_evaluate(func, features)
+        except Exception:
             return 1e18
-        # Slightly faster MSE computation
-        diff = preds - targets_cached
-        return float(np.dot(diff, diff) / len(diff))
+        if not np.isfinite(preds).all():
+            return 1e18
+        np.subtract(preds, targets, out=diff_buf)
+        return float(np.dot(diff_buf, diff_buf) * inv_n)
+
+    initial_mse = objective(initial)
+
+    # Adaptive iteration budget: small trees converge fast
+    maxiter = min(80, 15 + 8 * len(indices))
 
     result = minimize(
         objective,
         initial,
         method="Nelder-Mead",
-        options={"maxiter": 100, "xatol": 1e-6, "fatol": 1e-8},
+        options={"maxiter": maxiter, "xatol": 1e-5, "fatol": 1e-7},
     )
-    # Comparing against initial MSE to avoid regressing
-    best = result.x
-    best_mse = objective(best)
-    initial_mse = objective(initial)
-    if initial_mse < best_mse:
-        best = initial
+    best = result.x if result.fun < initial_mse else initial
     for idx, value in zip(indices, best, strict=False):
-        individual[idx] = make_constant_terminal(value)
-
-    logger.debug(
-        "Constants optimized",
-        extra={"count": len(indices), "success": result.success},
-    )
-
+        individual[idx] = make_constant_terminal(float(value))
 
 def evaluate_individual(
     individual: gp.PrimitiveTree,

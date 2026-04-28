@@ -1,41 +1,32 @@
-import math
-
 import numpy as np
 from deap import gp
 
 
-def _add(a: float, b: float) -> float:
-    return a + b
+def _add(a, b):
+    return np.add(a, b)
 
+def _sub(a, b):
+    return np.subtract(a, b)
 
-def _sub(a: float, b: float) -> float:
-    return a - b
+def _mul(a, b):
+    return np.multiply(a, b)
 
+def _neg(a):
+    return np.negative(a)
 
-def _mul(a: float, b: float) -> float:
-    return a * b
+def _square(a):
+    return np.square(a)
 
+def _abs(a):
+    return np.abs(a)
 
-def _neg(a: float) -> float:
-    return -a
+def _protected_div(left, right):
+    with np.errstate(divide="ignore", invalid="ignore"):
+        result = np.where(np.abs(right) > 1e-12, left / right, left)
+    return result
 
-
-def _square(a: float) -> float:
-    return a * a
-
-
-def _abs(a: float) -> float:
-    return abs(a)
-
-
-def _protected_div(left: float, right: float) -> float:
-    """Division that returns the numerator when the denominator is near zero."""
-    return left / right if abs(right) > 1e-12 else left
-
-
-def _protected_sqrt(x: float) -> float:
-    """Square root of absolute value to avoid complex numbers."""
-    return math.sqrt(abs(x))
+def _protected_sqrt(x):
+    return np.sqrt(np.abs(x))
 
 
 def _random_ephemeral_constant() -> float:
