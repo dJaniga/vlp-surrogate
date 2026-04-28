@@ -92,6 +92,8 @@ vfp-surrogate evaluator \
 | XGBoost | `xgb` | Gradient boosted trees |
 | Gaussian Process | `gp` | Probabilistic surrogate with uncertainty estimates |
 | Symbolic | `symbolic` | Genetic programming — evolves an interpretable mathematical expression |
+| Bayesian Ridge| `bayesian_ridge` | Bayesian regression with Gaussian noise |
+|Huber | `huber` | Robust regression with Huber loss |
 
 ### Symbolic model options
 
