@@ -48,7 +48,7 @@ class HuberRegressor(VFPModel):
             else tuple(f"ARG{i}" for i in range(features.shape[1]))
         )
 
-        self._model = HBRegressor(epsilon=self.epsilon, alpha=self.alpha)
+        self._model = HBRegressor(epsilon=self.epsilon, alpha=self.alpha, max_iter=200)
         self._model.fit(features, targets.ravel())
         logger.debug("Coefficients", extra={"coefficients": self.get_fit_details()})
         return self
