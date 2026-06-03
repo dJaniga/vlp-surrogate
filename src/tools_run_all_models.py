@@ -32,7 +32,6 @@ SELECTED_METRICS: tuple[str, ...] = (
 def _detect_physical_cpu_count() -> int:
     try:
         import psutil  # type: ignore[import-not-found]
-
         physical = psutil.cpu_count(logical=False)
         if physical:
             return int(physical)

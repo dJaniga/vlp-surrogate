@@ -38,17 +38,17 @@ format = "%(asctime)s- %(module)-30s %(lineno)-4d - %(levelname)-8s - %(message)
 [tool.vlp_surrogate.logging.handlers.console]
 class = "logging.StreamHandler"
 formatter = "standard"
-level = "INFO"
+level = "DEBUG"
 stream = "ext://sys.stdout"
 
 [tool.vlp_surrogate.logging.handlers.file]
 class = "logging.FileHandler"
-level = "INFO"
+level = "DEBUG"
 formatter = "standard"
 filename = "logs/vlp_surrogate.log"
 encoding = "utf-8"
-mode = "a"
+mode = "w"
 
 [tool.vlp_surrogate.logging.root]
-level = "INFO"
+level = "DEBUG"
 handlers = ["console", "file"]

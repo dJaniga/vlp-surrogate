@@ -98,11 +98,14 @@ def _pipeline(
     tuning_metric: str = "mean_squared_error",
 ):
     model = copy.deepcopy(reference_model)
+
     model_wrapper = ModelWrapper(model=model, export_path=fit_results_export_path)
 
     valid_operating_conditions = filter_valid_operating_conditions(
         well_data, required_valid_operation_condition_keys
     )
+
+
     if valid_operating_conditions.empty:
         return None
 

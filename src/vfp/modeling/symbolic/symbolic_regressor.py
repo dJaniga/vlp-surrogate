@@ -64,7 +64,7 @@ class SymbolicRegressor(VFPModel):
     crossover_rate: float = 0.7
     tournament_size: int = 3
     max_tree_height: int = 6
-    tolerance: float = 1e-4
+    tolerance: float = 1e-6
     seed: int | None = None
     n_islands: int = 4
     migration_interval: int = 5
@@ -94,7 +94,7 @@ class SymbolicRegressor(VFPModel):
             raise ValueError("Model has not been fit yet.")
         return {
             "pareto_size": len(self.pareto_front_),
-            "best_mse": self.best_individual_.fitness.values[0],  # type: ignore[attr-defined]
+            "best_fitness": self.best_individual_.fitness.values[0],  # type: ignore[attr-defined]
             "best_complexity": self.best_individual_.fitness.values[1],  # type: ignore[attr-defined]
             "expression": str(self.best_individual_),
         }
@@ -284,7 +284,7 @@ class SymbolicRegressor(VFPModel):
             islands.append(island)
 
         # ---- main loop -----------------------------------------------------
-        best_eval_mse = float("inf")
+        best_eval_fitness = float("inf")
         patience = max(self.generations // 10, 10)
         patience_counter = 0
         best_islands_snapshot: list[list[gp.PrimitiveTree]] | None = None
@@ -356,7 +356,7 @@ class SymbolicRegressor(VFPModel):
                     migrate(islands, self.migration_size, rng)
 
                 # ---- find current best ------------------------------------
-                best = _best_by_mse_across_islands(islands)
+                best = _best_by_fitness_across_islands(islands)
 
                 # train tolerance
                 if best and best.fitness.values[0] < self.tolerance:  # type: ignore[attr-defined]
@@ -364,7 +364,7 @@ class SymbolicRegressor(VFPModel):
                         "Early stopping reached (train tolerance)",
                         extra={
                             "generation": generation,
-                            "mse": best.fitness.values[0],  # type: ignore[attr-defined]
+                            "fitness": best.fitness.values[0],  # type: ignore[attr-defined]
                         },
                     )
                     best_islands_snapshot = islands  # lazy: deepcopy only at the end
@@ -376,7 +376,7 @@ class SymbolicRegressor(VFPModel):
                     and eval_features_std is not None
                     and eval_targets_std is not None
                 ):
-                    val_mse, _ = evaluate_individual(
+                    val_fitness, _ = evaluate_individual(
                         best,
                         self._pset,
                         eval_features_std,
@@ -384,8 +384,8 @@ class SymbolicRegressor(VFPModel):
                         self.parsimony_coefficient,
                     )
 
-                    if val_mse < best_eval_mse:
-                        best_eval_mse = val_mse
+                    if val_fitness < best_eval_fitness:
+                        best_eval_fitness = val_fitness
                         patience_counter = 0
                         # Deepcopy ONLY when we actually beat the previous best
                         best_islands_snapshot = [
@@ -398,8 +398,8 @@ class SymbolicRegressor(VFPModel):
                                 "Early stopping reached (validation patience)",
                                 extra={
                                     "generation": generation,
-                                    "val_mse": val_mse,
-                                    "best_val_mse": best_eval_mse,
+                                    "val_fitness": val_fitness,
+                                    "best_val_fitness": best_eval_fitness,
                                 },
                             )
                             break
@@ -411,7 +411,7 @@ class SymbolicRegressor(VFPModel):
                     "Generation complete",
                     extra={
                         "generation": generation,
-                        "best_mse": best.fitness.values[0] if best else None,  # type: ignore[attr-defined]
+                        "best_fitness": best.fitness.values[0] if best else None,  # type: ignore[attr-defined]
                         "best_len": len(best) if best else None,
                         "cache_size": len(self._fitness_cache),
                     },
@@ -446,7 +446,7 @@ class SymbolicRegressor(VFPModel):
         self.pareto_front_ = tools.sortNondominated(
             all_individuals, len(all_individuals), first_front_only=True
         )[0]
-        self.best_individual_ = _best_by_mse(self.pareto_front_)
+        self.best_individual_ = _best_by_fitness(self.pareto_front_)
         if self.best_individual_ is None:
             raise RuntimeError("Symbolic regression did not produce a valid model.")
 
@@ -471,7 +471,7 @@ class SymbolicRegressor(VFPModel):
         return predictions
 
 
-def _best_by_mse(population: list[gp.PrimitiveTree]) -> gp.PrimitiveTree | None:
+def _best_by_fitness(population: list[gp.PrimitiveTree]) -> gp.PrimitiveTree | None:
     if not population:
         return None
     valid = [
@@ -484,19 +484,19 @@ def _best_by_mse(population: list[gp.PrimitiveTree]) -> gp.PrimitiveTree | None:
     return min(valid, key=lambda ind: ind.fitness.values[0])  # type: ignore[attr-defined]
 
 
-def _best_by_mse_across_islands(
+def _best_by_fitness_across_islands(
     islands: list[list[gp.PrimitiveTree]],
 ) -> gp.PrimitiveTree | None:
     """Avoid building a flat list of all individuals just to find the min."""
     best: gp.PrimitiveTree | None = None
-    best_mse = float("inf")
+    best_fitness = float("inf")
     for island in islands:
         for ind in island:
             if not ind.fitness.valid:  # type: ignore[attr-defined]
                 continue
-            mse = ind.fitness.values[0]  # type: ignore[attr-defined]
-            if mse < best_mse and mse < _PENALTY_FITNESS[0]:
-                best_mse = mse
+            fitness = ind.fitness.values[0]  # type: ignore[attr-defined]
+            if fitness < best_fitness and fitness < _PENALTY_FITNESS[0]:
+                best_fitness = fitness
                 best = ind
     return best
 

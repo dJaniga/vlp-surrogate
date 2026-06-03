@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 import logging
 
@@ -7,11 +8,19 @@ import numpy as np
 from deap import creator, gp, tools
 from scipy.optimize import minimize
 
+from vfp.modeling.tuning_metrics import evaluate_metric, AVAILABLE_METRICS, MAXIMIZE_METRICS
 
 logger = logging.getLogger(__name__)
 
 # TODO: paramterize
 _PENALTY_FITNESS = (1e18, 1e18)
+
+
+def _compute_metric(preds: np.ndarray, targets: np.ndarray, metric: str) -> float:
+    minimize_metrics = AVAILABLE_METRICS.difference(MAXIMIZE_METRICS)
+    if metric not in minimize_metrics:
+        raise ValueError(f"Invalid metric: {metric} - only {minimize_metrics} are supported for minimization")
+    return evaluate_metric(metric, preds, targets)
 
 
 def build_seed_individuals(
@@ -219,7 +228,7 @@ def optimize_constants(
         np.subtract(preds, targets, out=diff_buf)
         return float(np.dot(diff_buf, diff_buf) * inv_n)
 
-    initial_mse = objective(initial)
+    initial_fitness = objective(initial)
 
     # Adaptive iteration budget: small trees converge fast
     maxiter = min(80, 15 + 8 * len(indices))
@@ -230,7 +239,7 @@ def optimize_constants(
         method="Nelder-Mead",
         options={"maxiter": maxiter, "xatol": 1e-5, "fatol": 1e-7},
     )
-    best = result.x if result.fun < initial_mse else initial
+    best = result.x if result.fun < initial_fitness else initial
     for idx, value in zip(indices, best, strict=False):
         individual[idx] = make_constant_terminal(float(value))
 
@@ -241,25 +250,31 @@ def evaluate_individual(
     targets: np.ndarray,
     parsimony_coefficient: float = 0.0,
 ) -> tuple[float, float]:
-    """Evaluate fitness as (MSE + parsimony_penalty, tree_length).
+    """Evaluate fitness as (metric_value + parsimony_penalty, tree_length).
 
-    The parsimony term penalises bloated trees even when their raw MSE is
+    The parsimony term penalises bloated trees even when their raw error is
     competitive.
+
+    Args:
+        metric: One of ``"mean_squared_error"``, ``"mean_absolute_percentage_error"``,
+            ``"root_mean_squared_log_error"``, or ``"median_absolute_error"``.
     """
+    metric = os.environ.get("VLP_FIT_METRIC", "mean_squared_error")
+
     try:
         func = gp.compile(individual, pset)
         preds = vectorised_evaluate(func, features)
         if np.any(~np.isfinite(preds)):
             return _PENALTY_FITNESS
-        # Faster MSE: use dot product instead of mean of squares
-        diff = preds - targets
-        mse = float(np.dot(diff, diff) / len(diff))
-    except Exception:
+        error = _compute_metric(preds, targets, metric)
+        if not np.isfinite(error):
+            return _PENALTY_FITNESS
+    except (ValueError, Exception):
         return _PENALTY_FITNESS
 
     complexity = float(len(individual))
-    penalised_mse = mse + parsimony_coefficient * complexity
-    return penalised_mse, complexity
+    penalised_error = error + parsimony_coefficient * complexity
+    return penalised_error, complexity
 
 
 def migrate(

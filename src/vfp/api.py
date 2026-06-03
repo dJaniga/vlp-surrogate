@@ -208,10 +208,6 @@ def run_pipeline(
     if table_granularity <= 2:
         raise ValueError("table_granularity must be greater than 2")
 
-    if output_folder_path.exists():
-        shutil.rmtree(output_folder_path)
-    output_folder_path.mkdir(parents=True, exist_ok=True)
-
     reader = initialize_reader_from_path(source_file_path)
 
     well_data_filter = _read_well_data_filter(well_data_filter_path)
@@ -290,10 +286,6 @@ def run_evaluator(
     output_folder_path: Path,
     well_data_filter_path: Path | None = None,
 ):
-    if output_folder_path.exists():
-        shutil.rmtree(output_folder_path)
-    output_folder_path.mkdir(parents=True, exist_ok=True)
-
     reader = initialize_reader_from_path(source_file_path)
 
     well_data_filter = _read_well_data_filter(well_data_filter_path)

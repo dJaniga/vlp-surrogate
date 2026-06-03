@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from sklearn.model_selection import KFold
+from sklearn.preprocessing import StandardScaler
 import copy
 import numpy as np
 import orjson
@@ -46,6 +47,8 @@ class ModelWrapper:
     model: VFPModel
     export_path: Path
     seed: int | None = None
+    feature_scaler: StandardScaler = field(default_factory=StandardScaler)
+    target_scaler: StandardScaler = field(default_factory=StandardScaler)
 
     def __post_init__(self) -> None:
         if self.seed is None:
@@ -62,6 +65,9 @@ class ModelWrapper:
         outer_splits: int = 5,
         inner_splits: int = 5,
     ) -> VFPModel:
+
+        logger.info(f">>>> Starting fitting model {self.model}...")
+
         _features_name: tuple[str, ...] = (
             features_name
             if features_name is not None
@@ -70,6 +76,12 @@ class ModelWrapper:
 
         features = np.asarray(features)
         targets = np.asarray(targets)
+
+        # ------------------------------------------------------------------ #
+        # 0. STANDARDIZE features and targets                                  #
+        # ------------------------------------------------------------------ #
+        features = self.feature_scaler.fit_transform(features)
+        targets = self.target_scaler.fit_transform(targets.reshape(-1, 1)).ravel()
 
         # ------------------------------------------------------------------ #
         # 1. NESTED CROSS-VALIDATION — unbiased generalization estimate        #
@@ -83,7 +95,7 @@ class ModelWrapper:
         for outer_idx, (outer_train_idx, outer_val_idx) in enumerate(
             outer_kf.split(features)
         ):
-            logger.debug(f"Outer CV fold {outer_idx + 1}/{outer_splits}")
+            logger.debug(f"*** Outer CV fold {outer_idx + 1}/{outer_splits} ***")
 
             X_outer_train, X_outer_val = (
                 features[outer_train_idx],
@@ -118,8 +130,10 @@ class ModelWrapper:
             )
 
             y_outer_pred = fold_model.predict(X_outer_val)
+            y_outer_val_orig = self.target_scaler.inverse_transform(y_outer_val.reshape(-1, 1)).ravel()
+            y_outer_pred_orig = self.target_scaler.inverse_transform(y_outer_pred.reshape(-1, 1)).ravel()
             outer_metrics_list.append(
-                run_all_regression_metrics(y_outer_val, y_outer_pred)
+                run_all_regression_metrics(y_outer_val_orig, y_outer_pred_orig)
             )
             outer_fold_sizes.append(len(outer_val_idx))
 
@@ -137,7 +151,7 @@ class ModelWrapper:
                     nested_cv_metrics[key] = float(np.average(scores, weights=weights))
 
         logger.debug(
-            "Nested CV complete", extra={"nested_cv_metrics": nested_cv_metrics}
+            "*** Nested CV complete ***", extra={"nested_cv_metrics": nested_cv_metrics}
         )
 
         # ------------------------------------------------------------------ #
@@ -162,26 +176,29 @@ class ModelWrapper:
         self.model.fit(features, targets, features_name=_features_name)
 
         # Training-set metrics (expected to be optimistic — for diagnostics only)
-        y_pred_train_all = self.predict(features)
-        train_metrics = run_all_regression_metrics(targets, y_pred_train_all)
+        y_pred_train_all = self.predict(self.feature_scaler.inverse_transform(features))
+        targets_orig = self.target_scaler.inverse_transform(targets.reshape(-1, 1)).ravel()
+        train_metrics = run_all_regression_metrics(targets_orig, y_pred_train_all)
 
         fit_metrics = {
-            "train_resubstitution": train_metrics,  # optimistic, diagnostic only
-            "nested_cv": nested_cv_metrics,  # unbiased generalization estimate
+            "full_dataset": train_metrics,  # optimistic, diagnostic only
+            "cv_datasets": nested_cv_metrics,  # unbiased generalization estimate
         }
 
         logger.debug("Fit diagnostics", extra={"fit_metrics": fit_metrics})
+
         logger.info(
-            f"Model {self.model} fit completed with target metric {tuning_metric}: {train_metrics[tuning_metric]}"
+            f">>>> Model {self.model} fit completed with target metric {tuning_metric}: {train_metrics[tuning_metric]}"
         )
 
         # ------------------------------------------------------------------ #
         # 3. EXPORT                                                            #
         # ------------------------------------------------------------------ #
         self.export_path.mkdir(parents=True, exist_ok=True)
+        well_name = self.export_path.parts[-1]
 
         with open(
-            Path(self.export_path, f"{str(self.model)}_fit_results").with_suffix(
+            Path(self.export_path, f"{well_name}_{str(self.model)}_{tuning_metric}_fit_results").with_suffix(
                 ".json"
             ),
             "w",
@@ -192,14 +209,14 @@ class ModelWrapper:
             pd.DataFrame(fit_metrics).reset_index().rename(columns={"index": "Metric"})
         )
         metrics_df.to_csv(
-            Path(self.export_path, f"{str(self.model)}_fit_results").with_suffix(
+            Path(self.export_path, f"{well_name}_{str(self.model)}_{tuning_metric}_fit_results").with_suffix(
                 ".csv"
             ),
             index=False,
         )
 
         with open(
-            Path(self.export_path, f"{str(self.model)}_fit_details").with_suffix(
+            Path(self.export_path, f"{well_name}_{str(self.model)}_{tuning_metric}_fit_details").with_suffix(
                 ".json"
             ),
             "wb",
@@ -211,18 +228,21 @@ class ModelWrapper:
             )
 
         # Export predictions from the final model on full data
-        y_pred_all = self.predict(features)
+        features_orig = self.feature_scaler.inverse_transform(features)
+        y_pred_all = self.predict(features_orig)
         df_content = {"T": index.tolist()}
-        df_content.update({k: v for k, v in zip(_features_name, features.T.tolist())})
-        df_content["target"] = targets.flatten().tolist()
+        df_content.update({k: v for k, v in zip(_features_name, features_orig.T.tolist())})
+        df_content["target"] = targets_orig.flatten().tolist()
         df_content["predicted"] = y_pred_all.flatten().tolist()
 
         pd.DataFrame(df_content).to_csv(
-            Path(self.export_path, f"{str(self.model)}_fit_data").with_suffix(".csv"),
+            Path(self.export_path, f"{well_name}_{str(self.model)}_{tuning_metric}_fit_data").with_suffix(".csv"),
             index=True,
         )
 
         return self.model
 
     def predict(self, features: np.ndarray) -> np.ndarray:
-        return self.model.predict(features)
+        features_scaled = self.feature_scaler.transform(np.asarray(features))
+        predictions_scaled = self.model.predict(features_scaled)
+        return self.target_scaler.inverse_transform(predictions_scaled.reshape(-1, 1)).ravel()
