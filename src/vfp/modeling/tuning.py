@@ -101,7 +101,7 @@ def tune_hyperparameters(
                     "basic_arithmetic_only", [True, False]
                 )
                 trial_model.const_opt_top_k_ratio = trial.suggest_float(
-                    "const_opt_top_k_ratio", 0.1, 0.8
+                    "const_opt_top_k_ratio", 0.1, 1.0
                 )
 
             elif isinstance(trial_model, ElasticNetRegressor):
