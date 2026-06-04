@@ -1,6 +1,5 @@
 import json
 import logging
-import shutil
 from collections.abc import Set
 from pathlib import Path
 from typing import Literal

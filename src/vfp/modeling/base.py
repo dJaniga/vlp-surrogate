@@ -130,8 +130,12 @@ class ModelWrapper:
             )
 
             y_outer_pred = fold_model.predict(X_outer_val)
-            y_outer_val_orig = self.target_scaler.inverse_transform(y_outer_val.reshape(-1, 1)).ravel()
-            y_outer_pred_orig = self.target_scaler.inverse_transform(y_outer_pred.reshape(-1, 1)).ravel()
+            y_outer_val_orig = self.target_scaler.inverse_transform(
+                y_outer_val.reshape(-1, 1)
+            ).ravel()
+            y_outer_pred_orig = self.target_scaler.inverse_transform(
+                y_outer_pred.reshape(-1, 1)
+            ).ravel()
             outer_metrics_list.append(
                 run_all_regression_metrics(y_outer_val_orig, y_outer_pred_orig)
             )
@@ -177,7 +181,9 @@ class ModelWrapper:
 
         # Training-set metrics (expected to be optimistic — for diagnostics only)
         y_pred_train_all = self.predict(self.feature_scaler.inverse_transform(features))
-        targets_orig = self.target_scaler.inverse_transform(targets.reshape(-1, 1)).ravel()
+        targets_orig = self.target_scaler.inverse_transform(
+            targets.reshape(-1, 1)
+        ).ravel()
         train_metrics = run_all_regression_metrics(targets_orig, y_pred_train_all)
 
         fit_metrics = {
@@ -198,9 +204,10 @@ class ModelWrapper:
         well_name = self.export_path.parts[-1]
 
         with open(
-            Path(self.export_path, f"{well_name}_{str(self.model)}_{tuning_metric}_fit_results").with_suffix(
-                ".json"
-            ),
+            Path(
+                self.export_path,
+                f"{well_name}_{str(self.model)}_{tuning_metric}_fit_results",
+            ).with_suffix(".json"),
             "w",
         ) as f:
             json.dump(fit_metrics, f, indent=4)
@@ -209,16 +216,18 @@ class ModelWrapper:
             pd.DataFrame(fit_metrics).reset_index().rename(columns={"index": "Metric"})
         )
         metrics_df.to_csv(
-            Path(self.export_path, f"{well_name}_{str(self.model)}_{tuning_metric}_fit_results").with_suffix(
-                ".csv"
-            ),
+            Path(
+                self.export_path,
+                f"{well_name}_{str(self.model)}_{tuning_metric}_fit_results",
+            ).with_suffix(".csv"),
             index=False,
         )
 
         with open(
-            Path(self.export_path, f"{well_name}_{str(self.model)}_{tuning_metric}_fit_details").with_suffix(
-                ".json"
-            ),
+            Path(
+                self.export_path,
+                f"{well_name}_{str(self.model)}_{tuning_metric}_fit_details",
+            ).with_suffix(".json"),
             "wb",
         ) as f:
             f.write(
@@ -231,12 +240,17 @@ class ModelWrapper:
         features_orig = self.feature_scaler.inverse_transform(features)
         y_pred_all = self.predict(features_orig)
         df_content = {"T": index.tolist()}
-        df_content.update({k: v for k, v in zip(_features_name, features_orig.T.tolist())})
+        df_content.update(
+            {k: v for k, v in zip(_features_name, features_orig.T.tolist())}
+        )
         df_content["target"] = targets_orig.flatten().tolist()
         df_content["predicted"] = y_pred_all.flatten().tolist()
 
         pd.DataFrame(df_content).to_csv(
-            Path(self.export_path, f"{well_name}_{str(self.model)}_{tuning_metric}_fit_data").with_suffix(".csv"),
+            Path(
+                self.export_path,
+                f"{well_name}_{str(self.model)}_{tuning_metric}_fit_data",
+            ).with_suffix(".csv"),
             index=True,
         )
 
@@ -245,4 +259,6 @@ class ModelWrapper:
     def predict(self, features: np.ndarray) -> np.ndarray:
         features_scaled = self.feature_scaler.transform(np.asarray(features))
         predictions_scaled = self.model.predict(features_scaled)
-        return self.target_scaler.inverse_transform(predictions_scaled.reshape(-1, 1)).ravel()
+        return self.target_scaler.inverse_transform(
+            predictions_scaled.reshape(-1, 1)
+        ).ravel()

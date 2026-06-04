@@ -8,7 +8,11 @@ import numpy as np
 from deap import creator, gp, tools
 from scipy.optimize import minimize
 
-from vfp.modeling.tuning_metrics import evaluate_metric, AVAILABLE_METRICS, MAXIMIZE_METRICS
+from vfp.modeling.tuning_metrics import (
+    evaluate_metric,
+    AVAILABLE_METRICS,
+    MAXIMIZE_METRICS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +23,9 @@ _PENALTY_FITNESS = (1e18, 1e18)
 def _compute_metric(preds: np.ndarray, targets: np.ndarray, metric: str) -> float:
     minimize_metrics = AVAILABLE_METRICS.difference(MAXIMIZE_METRICS)
     if metric not in minimize_metrics:
-        raise ValueError(f"Invalid metric: {metric} - only {minimize_metrics} are supported for minimization")
+        raise ValueError(
+            f"Invalid metric: {metric} - only {minimize_metrics} are supported for minimization"
+        )
     return evaluate_metric(metric, preds, targets)
 
 
@@ -124,6 +130,63 @@ def build_seed_individuals(
         ]
         seeds.append(tokens)
 
+    # 6. Affine pairwise: c0 + c1*ARGi + c2*ARGj  (with explicit intercept)
+    for i in range(n_features):
+        for j in range(i + 1, n_features):
+            tokens = [
+                add_prim,
+                add_prim,
+                _const(0.0),           # intercept c0
+                mul_prim,
+                _const(1.0),
+                _arg(i),
+                mul_prim,
+                _const(1.0),
+                _arg(j),
+            ]
+            seeds.append(tokens)
+
+    # 7. Scaled difference: c * (ARGi - ARGj)
+    if "_sub" in prim:
+        sub_prim = prim["_sub"]
+        for i in range(n_features):
+            for j in range(i + 1, n_features):
+                tokens = [
+                    mul_prim,
+                    _const(1.0),
+                    sub_prim,
+                    _arg(i),
+                    _arg(j),
+                ]
+                seeds.append(tokens)
+    # 8. Leave-one-out linear combination (n_features >= 3)
+    if n_features >= 3:
+        for skip in range(n_features):
+            active = [k for k in range(n_features) if k != skip]
+            tokens = [mul_prim, _const(1.0), _arg(active[0])]
+            for k in active[1:]:
+                tokens = [add_prim] + tokens + [mul_prim, _const(1.0), _arg(k)]
+            tokens = [add_prim, const_zero] + tokens
+            seeds.append(tokens)
+
+    # 9. Linear + all pairwise interactions:
+    #    c0 + c1*ARG0 + ... + cN*ARG(N-1) + c_ij*ARGi*ARGj  (for all i < j)
+    if n_features >= 2 and n_features <= 6:
+        # Start with main effects
+        terms: list[list] = [[mul_prim, _const(1.0), _arg(i)] for i in range(n_features)]
+        # Add interaction terms: c_ij * ARGi * ARGj
+        for i in range(n_features):
+            for j in range(i + 1, n_features):
+                terms.append([mul_prim, _const(1.0), mul_prim, _arg(i), _arg(j)])
+        # Chain all terms with _add: _add(term0, _add(term1, ...))
+        tokens = terms[0]
+        for term in terms[1:]:
+            tokens = [add_prim] + tokens + term
+        # Prepend intercept
+        tokens = [add_prim, const_zero] + tokens
+        seeds.append(tokens)
+
+
     individuals: list[gp.PrimitiveTree] = []
     for token_list in seeds:
         try:
@@ -132,10 +195,6 @@ def build_seed_individuals(
         except Exception:
             continue
 
-    logger.debug(
-        "Seed individuals created",
-        extra={"count": len(individuals), "n_features": n_features},
-    )
     return individuals
 
 
@@ -182,6 +241,7 @@ def make_constant_terminal(value: float) -> gp.Terminal:
     # The value is explicitly cast to a Python float so that repr(value)
     # produces a plain literal like 1.0 rather than np.float64(1.0).
     return gp.Terminal(float(value), False, object)
+
 
 _COMPILE_CACHE: dict[str, object] = {}
 _COMPILE_CACHE_MAX = 20_000
@@ -243,38 +303,35 @@ def optimize_constants(
     for idx, value in zip(indices, best, strict=False):
         individual[idx] = make_constant_terminal(float(value))
 
+
+# Module-level metric cache — resolved once, not per-call
+_FIT_METRIC: str = os.environ.get("VLP_FIT_METRIC", "mean_squared_error")
+
+
 def evaluate_individual(
     individual: gp.PrimitiveTree,
     pset: gp.PrimitiveSet,
     features: np.ndarray,
     targets: np.ndarray,
-    parsimony_coefficient: float = 0.0,
 ) -> tuple[float, float]:
-    """Evaluate fitness as (metric_value + parsimony_penalty, tree_length).
+    """Evaluate fitness as (penalised_error, tree_complexity).
 
-    The parsimony term penalises bloated trees even when their raw error is
-    competitive.
-
-    Args:
-        metric: One of ``"mean_squared_error"``, ``"mean_absolute_percentage_error"``,
-            ``"root_mean_squared_log_error"``, or ``"median_absolute_error"``.
+    error increase tolerated for a fully-bloated tree.
+    E.g. 0.05 = allow up to 5% worse error in exchange for maximum tree size.
     """
-    metric = os.environ.get("VLP_FIT_METRIC", "mean_squared_error")
-
     try:
-        func = gp.compile(individual, pset)
+        func = _compile_cached(individual, pset)
         preds = vectorised_evaluate(func, features)
-        if np.any(~np.isfinite(preds)):
+        if not np.all(np.isfinite(preds)):
             return _PENALTY_FITNESS
-        error = _compute_metric(preds, targets, metric)
+        error = _compute_metric(preds, targets, _FIT_METRIC)
         if not np.isfinite(error):
             return _PENALTY_FITNESS
-    except (ValueError, Exception):
+    except Exception:
         return _PENALTY_FITNESS
 
     complexity = float(len(individual))
-    penalised_error = error + parsimony_coefficient * complexity
-    return penalised_error, complexity
+    return error, complexity
 
 
 def migrate(

@@ -112,7 +112,9 @@ def main():
     parsed_args = parser.parse_args()
 
     if parsed_args.mode == "pipeline":
-        log_path = parsed_args.output_folder / parsed_args.model / f"{parsed_args.model}.log"
+        log_path = (
+            parsed_args.output_folder / parsed_args.model / f"{parsed_args.model}.log"
+        )
     else:
         log_path = None
 
@@ -129,7 +131,7 @@ def main():
 
         if parsed_args.model == "symbolic":
             logger.info("Using symbolic model", extra={"model": "symbolic"})
-            model = create_model("symbolic",seed=parsed_args.seed)
+            model = create_model("symbolic", seed=parsed_args.seed)
         elif parsed_args.model == "linear":
             logger.info("Using linear model", extra={"model": "linear"})
             model = create_model("linear", seed=parsed_args.seed)

@@ -107,7 +107,6 @@ The symbolic model uses an island-model genetic algorithm and accepts additional
 | `--migration-interval` | `5` | Generations between island migrations |
 | `--migration-size` | `3` | Individuals exchanged per migration |
 | `--simplify-interval` | `5` | Generations between SymPy simplification passes (`0` to disable) |
-| `--parsimony-coefficient` | `0.001` | Penalty per tree node (controls expression complexity) |
 | `--max-tree-height` | `6` | Maximum depth of GP expression trees |
 
 ---

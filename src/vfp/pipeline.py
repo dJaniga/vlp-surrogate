@@ -19,6 +19,7 @@ from vfp.preprocess.filters import filter_valid_operating_conditions
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass(frozen=True)
 class VFPPipelineConfig:
     table_type: VFPType
@@ -104,7 +105,6 @@ def _pipeline(
     valid_operating_conditions = filter_valid_operating_conditions(
         well_data, required_valid_operation_condition_keys
     )
-
 
     if valid_operating_conditions.empty:
         return None

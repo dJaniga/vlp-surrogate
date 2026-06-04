@@ -5,20 +5,26 @@ from deap import gp
 def _add(a, b):
     return np.add(a, b)
 
+
 def _sub(a, b):
     return np.subtract(a, b)
+
 
 def _mul(a, b):
     return np.multiply(a, b)
 
+
 def _neg(a):
     return np.negative(a)
+
 
 def _square(a):
     return np.square(a)
 
+
 def _abs(a):
     return np.abs(a)
+
 
 def _protected_div(left, right):
     with np.errstate(divide="ignore", invalid="ignore"):

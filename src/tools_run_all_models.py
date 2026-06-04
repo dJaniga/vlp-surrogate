@@ -19,7 +19,13 @@ from vfp.modeling.tuning_metrics import AVAILABLE_METRICS
 
 logger = logging.getLogger(__name__)
 
-ALL_MODELS: tuple[str, ...] = ("linear", "elasticnet", "bayesian_ridge", "huber", "symbolic")
+ALL_MODELS: tuple[str, ...] = (
+    "linear",
+    "elasticnet",
+    "bayesian_ridge",
+    "huber",
+    "symbolic",
+)
 
 SELECTED_METRICS: tuple[str, ...] = (
     "mean_absolute_percentage_error",
@@ -32,6 +38,7 @@ SELECTED_METRICS: tuple[str, ...] = (
 def _detect_physical_cpu_count() -> int:
     try:
         import psutil  # type: ignore[import-not-found]
+
         physical = psutil.cpu_count(logical=False)
         if physical:
             return int(physical)

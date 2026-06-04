@@ -25,20 +25,20 @@ def tune_hyperparameters(
     features: np.ndarray,
     targets: np.ndarray,
     features_name: tuple[str, ...],
-    n_trials: int = 50,
+    n_trials: int = 20,
     n_splits: int = 3,
     tuning_metric: str = "root_mean_squared_error",
     seed: int | None = None,
 ) -> VFPModel:
     if not isinstance(
-            model,
-            (
-                    XGBoostRegressor,
-                    SymbolicRegressor,
-                    ElasticNetRegressor,
-                    BayesianRidgeRegressor,
-                    HuberRegressor,
-            ),
+        model,
+        (
+            XGBoostRegressor,
+            SymbolicRegressor,
+            ElasticNetRegressor,
+            BayesianRidgeRegressor,
+            HuberRegressor,
+        ),
     ):
         logger.warning(
             f"Hyperparameter tuning not implemented for {type(model).__name__}. Returning original model."
@@ -85,12 +85,6 @@ def tune_hyperparameters(
                 }
                 trial_model.xgb_kwargs.update(kwargs)
             elif isinstance(trial_model, SymbolicRegressor):
-                trial_model.population_size = trial.suggest_int(
-                    "population_size", 50, 500, step=50
-                )
-                trial_model.generations = trial.suggest_int(
-                    "generations", 20, 200, step=10
-                )
                 trial_model.mutation_rate = trial.suggest_float(
                     "mutation_rate", 0.05, 0.5
                 )
@@ -101,50 +95,31 @@ def tune_hyperparameters(
                     "tournament_size", 2, 10
                 )
                 trial_model.max_tree_height = trial.suggest_int(
-                    "max_tree_height", 2, 12
-                )
-                trial_model.n_islands = trial.suggest_int(
-                    "n_islands", 1, 8
-                )
-                trial_model.migration_interval = trial.suggest_int(
-                    "migration_interval", 2, 20
-                )
-                trial_model.migration_size = trial.suggest_int(
-                    "migration_size", 1, 10
-                )
-                trial_model.simplify_interval = trial.suggest_int(
-                    "simplify_interval", 5, 30, step=5
-                )
-                trial_model.parsimony_coefficient = trial.suggest_float(
-                    "parsimony_coefficient", 0.0001, 1, log=True
+                    "max_tree_height", 2, 10
                 )
                 trial_model.basic_arithmetic_only = trial.suggest_categorical(
                     "basic_arithmetic_only", [True, False]
                 )
                 trial_model.const_opt_top_k_ratio = trial.suggest_float(
-                    "const_opt_top_k_ratio", 0.1, 0.5
+                    "const_opt_top_k_ratio", 0.1, 0.8
                 )
 
             elif isinstance(trial_model, ElasticNetRegressor):
-                trial_model.alpha = trial.suggest_float("alpha", 0.0001, 0.01, log=True)
-                trial_model.l1_ratio = trial.suggest_float("l1_ratio", 0.0, 1.0)
+                trial_model.alpha = trial.suggest_float("alpha", 1e-4, 10, log=True)
+                trial_model.l1_ratio = trial.suggest_float("l1_ratio", 0.01, 0.99)
 
             elif isinstance(trial_model, BayesianRidgeRegressor):
-                trial_model.alpha_1 = trial.suggest_float(
-                    "alpha_1", 1e-6, 0.1, log=True
-                )
-                trial_model.alpha_2 = trial.suggest_float(
-                    "alpha_2", 1e-6, 0.1, log=True
-                )
+                trial_model.alpha_1 = trial.suggest_float("alpha_1", 1e-6, 1, log=True)
+                trial_model.alpha_2 = trial.suggest_float("alpha_2", 1e-6, 1, log=True)
                 trial_model.lambda_1 = trial.suggest_float(
-                    "lambda_1", 1e-6, 0.1, log=True
+                    "lambda_1", 1e-6, 1, log=True
                 )
                 trial_model.lambda_2 = trial.suggest_float(
-                    "lambda_2", 1e-6, 0.1, log=True
+                    "lambda_2", 1e-6, 1, log=True
                 )
             elif isinstance(trial_model, HuberRegressor):
-                trial_model.epsilon = trial.suggest_float("epsilon", 1, 1000, log=True)
-                trial_model.alpha = trial.suggest_float("alpha", 1e-6, 1000, log=True)
+                trial_model.epsilon = trial.suggest_float("epsilon", 1.01, 1000)
+                trial_model.alpha = trial.suggest_float("alpha", 1e-4, 10, log=True)
 
             trial_model.fit(
                 X_train, y_train, features_name=features_name, eval_set=(X_val, y_val)
@@ -167,9 +142,13 @@ def tune_hyperparameters(
 
     best_params = study.best_params
     for t in study.trials:
-        logger.debug(f"Trial {t.number}: {t.params}, value: {t.value}, state: {t.state}")
+        logger.debug(
+            f"Trial {t.number}: {t.params}, value: {t.value}, state: {t.state}"
+        )
 
-    logger.debug(f"Best hyperparameters for {type(model).__name__} found: {best_params}, with results ({tuning_metric}) :{study.best_value}")
+    logger.debug(
+        f"Best hyperparameters for {type(model).__name__} found: {best_params}, with results ({tuning_metric}) :{study.best_value}"
+    )
 
     best_model = copy.deepcopy(model)
 
@@ -177,17 +156,10 @@ def tune_hyperparameters(
         best_model.xgb_kwargs.update(best_params)
         best_model.xgb_kwargs["early_stopping_rounds"] = 10
     elif isinstance(best_model, SymbolicRegressor):
-        best_model.population_size = best_params["population_size"]
-        best_model.generations = best_params["generations"]
         best_model.mutation_rate = best_params["mutation_rate"]
         best_model.crossover_rate = best_params["crossover_rate"]
         best_model.tournament_size = best_params["tournament_size"]
         best_model.max_tree_height = best_params["max_tree_height"]
-        best_model.n_islands = best_params["n_islands"]
-        best_model.migration_interval = best_params["migration_interval"]
-        best_model.migration_size = best_params["migration_size"]
-        best_model.simplify_interval = best_params["simplify_interval"]
-        best_model.parsimony_coefficient = best_params["parsimony_coefficient"]
         best_model.basic_arithmetic_only = best_params["basic_arithmetic_only"]
         best_model.const_opt_top_k_ratio = best_params["const_opt_top_k_ratio"]
     elif isinstance(best_model, ElasticNetRegressor):

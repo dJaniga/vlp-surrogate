@@ -67,7 +67,7 @@ def _deap_to_sympy(
                 # ephemeral constant
                 try:
                     stack.append(sympy.Float(float(node.value)))
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     return None
         elif isinstance(node, gp.Primitive):
             if node.name not in op_map:
@@ -207,7 +207,6 @@ def _simplify_individual(
     pset: gp.PrimitiveSet,
     features: np.ndarray,
     targets: np.ndarray,
-    parsimony_coefficient: float,
     n_features: int,
 ) -> bool:
     """Attempt to algebraically simplify an individual in-place.
@@ -243,7 +242,6 @@ def _simplify_individual(
             pset,
             features,
             targets,
-            parsimony_coefficient,
         )
         if new_fitness[0] >= _PENALTY_FITNESS[0]:
             return False
@@ -257,10 +255,6 @@ def _simplify_individual(
     # replace contents in-place
     individual[0 : len(individual)] = new_tokens
     individual.fitness.values = new_fitness  # type: ignore[attr-defined]
-    logger.debug(
-        "Individual simplified",
-        extra={"before": original_len, "after": len(new_tokens)},
-    )
     return True
 
 
@@ -269,7 +263,6 @@ def simplify_island(
     pset: gp.PrimitiveSet,
     features: np.ndarray,
     targets: np.ndarray,
-    parsimony_coefficient: float,
     n_features: int,
 ) -> None:
     """Apply SymPy simplification to all individuals in an island."""
@@ -280,7 +273,6 @@ def simplify_island(
             pset,
             features,
             targets,
-            parsimony_coefficient,
             n_features,
         ):
             simplified_count += 1
