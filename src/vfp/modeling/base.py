@@ -162,7 +162,7 @@ class ModelWrapper:
         # 2. FINAL MODEL — trained on ALL data                                #
         #    Hyperparameters tuned on all data via inner CV (no holdout leak) #
         # ------------------------------------------------------------------ #
-        logger.debug("Training final model on full dataset")
+        logger.debug("*** Training final model on full dataset ***")
 
         if optimize_hyperparameters:
             from vfp.modeling.tuning import tune_hyperparameters

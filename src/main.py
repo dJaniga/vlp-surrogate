@@ -81,6 +81,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=AVAILABLE_METRICS,
         default="mean_squared_error",
     )
+    parser_pipeline.add_argument(
+        "--force-symbolic-simplicity",
+        action="store_true",
+        help="Force symbolic regression to produce simpler models",
+        default=False,
+    )
 
     parser_evaluator = subparsers.add_parser(
         "evaluator",
@@ -121,6 +127,9 @@ def main():
     setup_logging(log_path=log_path)
 
     os.environ["VLP_FIT_METRIC"] = parsed_args.tuning_metric
+    os.environ["VLP_FORCE_SYMBOLIC_SIMPLICITY"] = str(
+        parsed_args.force_symbolic_simplicity
+    )
 
     if parsed_args.seed is not None:
         random.seed(parsed_args.seed)

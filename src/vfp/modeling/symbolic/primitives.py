@@ -31,6 +31,7 @@ def _protected_div(left, right):
         result = np.where(np.abs(right) > 1e-12, left / right, left)
     return result
 
+
 def _protected_sqrt(x):
     return np.sqrt(np.abs(x))
 

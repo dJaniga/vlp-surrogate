@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
@@ -8,7 +9,6 @@ from typing import Any
 import numpy as np
 from deap import base, gp, tools
 from sklearn.preprocessing import StandardScaler
-from tqdm import tqdm
 
 from vfp.modeling.base import VFPModel
 from .algebraic_simplification import simplify_island
@@ -57,22 +57,22 @@ def _tree_key(ind: gp.PrimitiveTree) -> tuple:
 class SymbolicRegressor(VFPModel):
     """Hybrid symbolic regressor: GP + NSGA-II + island migration + SymPy simplification."""
 
-    population_size: int = 200
-    generations: int = 50
-    mutation_rate: float = 0.2
-    crossover_rate: float = 0.7
-    tournament_size: int = 3
+    population_size: int = 100
+    generations: int = 500
+    mutation_rate: float = 0.3
+    crossover_rate: float = 0.9
+    tournament_size: int = 10
     max_tree_height: int = 6
-    tolerance: float = 1e-6
+    parsimony_coefficient: float = 1e-4
+    tolerance: float = 1e-4
     seed: int | None = None
-    n_islands: int = 5
-    migration_interval: int = 10
-    migration_size: int = 3
-    simplify_interval: int = 15  # less frequent: SymPy is expensive
+    n_islands: int = 4
+    migration_interval: int = 5
+    migration_size: int = 5
+    simplify_interval: int = 10
     basic_arithmetic_only: bool = False
-    const_opt_top_k_ratio: float = 0.25  # only optimize constants for top quartile
+    const_opt_top_k_ratio: float = 0.50
     parallel_islands: bool = True
-    # Scaling: set to False when an external scaler (e.g. ModelWrapper) handles it
     scale: bool = False
     pareto_front_: list[gp.PrimitiveTree] = field(default_factory=list)
     best_individual_: gp.PrimitiveTree | None = None
@@ -80,14 +80,9 @@ class SymbolicRegressor(VFPModel):
     _pset: gp.PrimitiveSet | None = None
     _feature_scaler: StandardScaler = field(default_factory=StandardScaler)
     _target_scaler: StandardScaler = field(default_factory=StandardScaler)
-    # Fitness cache: structural fingerprint -> (mse_penalised, complexity)
-    # Persisted across fit() calls to warm-start subsequent runs.
     _fitness_cache: dict = field(default_factory=dict)
-    # Reused across fit() calls to avoid process-spawn overhead in hot loops.
     _executor: ProcessPoolExecutor | None = field(default=None, repr=False)
-    # Fingerprint of the last training data seen; used to skip re-scaling.
     _last_features_id: tuple | None = field(default=None, repr=False)
-    # Feature names used when the current _pset / _toolbox were built.
     _built_features_name: tuple[str, ...] | None = field(default=None, repr=False)
 
     def __str__(self) -> str:
@@ -142,7 +137,14 @@ class SymbolicRegressor(VFPModel):
         cached = self._fitness_cache.get(key)
         if cached is not None:
             return cached
-        fit = evaluate_individual(ind, self._pset, features, targets)
+        fit = evaluate_individual(
+            ind,
+            self._pset,
+            features,
+            targets,
+            self.parsimony_coefficient,
+            self.max_tree_height,
+        )
         if len(self._fitness_cache) < 50_000:
             self._fitness_cache[key] = fit
         return fit
@@ -328,6 +330,7 @@ class SymbolicRegressor(VFPModel):
                         self.tournament_size,
                         self.crossover_rate,
                         self.mutation_rate,
+                        self.parsimony_coefficient,
                         self.const_opt_top_k_ratio,
                         dict(self._fitness_cache),
                         island_rng_seeds[i],
@@ -361,6 +364,8 @@ class SymbolicRegressor(VFPModel):
                         features_scaled,
                         targets_scaled,
                         n_features,
+                        self.parsimony_coefficient,
+                        self.max_tree_height,
                     )
 
             if (
@@ -393,6 +398,8 @@ class SymbolicRegressor(VFPModel):
                     self._pset,
                     eval_features_scaled,
                     eval_targets_scaled,
+                    self.parsimony_coefficient,
+                    self.max_tree_height,
                 )
 
                 if val_fitness < best_eval_fitness:
@@ -422,7 +429,7 @@ class SymbolicRegressor(VFPModel):
                 extra={
                     "generation": generation,
                     "best_fitness": best.fitness.values[0] if best else None,  # type: ignore[attr-defined]
-                    "best_complexity": best.fitness.values[1] if best else None, # type: ignore[attr-defined]
+                    "best_complexity": best.fitness.values[1] if best else None,  # type: ignore[attr-defined]
                 },
             )
 
@@ -444,11 +451,14 @@ class SymbolicRegressor(VFPModel):
                 features_scaled,
                 targets_scaled,
                 n_features,
+                self.parsimony_coefficient,
+                self.max_tree_height,
             )
 
         self.pareto_front_ = tools.sortNondominated(
             all_individuals, len(all_individuals), first_front_only=True
         )[0]
+
         self.best_individual_ = _best_by_fitness(self.pareto_front_)
         if self.best_individual_ is None:
             raise RuntimeError("Symbolic regression did not produce a valid model.")
@@ -476,89 +486,90 @@ class SymbolicRegressor(VFPModel):
 
 
 def _best_by_fitness(population: list[gp.PrimitiveTree]) -> gp.PrimitiveTree | None:
-    if not population:
-        return None
-    valid = [
-        ind
-        for ind in population
-        if ind.fitness.valid and ind.fitness.values[0] < _PENALTY_FITNESS[0]  # type: ignore[attr-defined]
-    ]
-    if not valid:
-        return min(population, key=lambda ind: ind.fitness.values[0])  # type: ignore[attr-defined]
-    return min(valid, key=lambda ind: ind.fitness.values[0])  # type: ignore[attr-defined]
+    force_simplicity = os.environ.get("VLP_FORCE_SYMBOLIC_SIMPLICITY").lower() in (
+        "true",
+    )
+    if force_simplicity:
+        if not population:
+            return None
+        valid = [
+            ind
+            for ind in population
+            if ind.fitness.valid and ind.fitness.values[0] < _PENALTY_FITNESS[0]
+        ]
+        if not valid:
+            return min(population, key=lambda ind: ind.fitness.values[0])
 
-# def _best_by_fitness(population: list[gp.PrimitiveTree]) -> gp.PrimitiveTree | None:
-#     if not population:
-#         return None
-#     valid = [
-#         ind for ind in population
-#         if ind.fitness.valid and ind.fitness.values[0] < _PENALTY_FITNESS[0]
-#     ]
-#     if not valid:
-#         return min(population, key=lambda ind: ind.fitness.values[0])
-#
-#     errors = [ind.fitness.values[0] for ind in valid]
-#     complexities = [ind.fitness.values[1] for ind in valid]
-#
-#     min_e, max_e = min(errors), max(errors)
-#     min_c, max_c = min(complexities), max(complexities)
-#
-#     def normalised_score(ind):
-#         e = ind.fitness.values[0]
-#         c = ind.fitness.values[1]
-#         norm_e = (e - min_e) / (max_e - min_e + 1e-12)
-#         norm_c = (c - min_c) / (max_c - min_c + 1e-12)
-#         return norm_e + norm_c  # equal weight; tune as needed
-#
-#     return min(valid, key=normalised_score)
+        errors = [ind.fitness.values[0] for ind in valid]
+        complexities = [ind.fitness.values[1] for ind in valid]
+
+        min_e, max_e = min(errors), max(errors)
+        min_c, max_c = min(complexities), max(complexities)
+
+        def normalised_score(ind):
+            e = ind.fitness.values[0]
+            c = ind.fitness.values[1]
+            norm_e = (e - min_e) / (max_e - min_e + 1e-12)
+            norm_c = (c - min_c) / (max_c - min_c + 1e-12)
+            return norm_e + norm_c  # equal weight; tune as needed
+
+        return min(valid, key=normalised_score)  # type: ignore[attr-defined]
+
+    else:
+        if not population:
+            return None
+        valid = [
+            ind
+            for ind in population
+            if ind.fitness.valid and ind.fitness.values[0] < _PENALTY_FITNESS[0]  # type: ignore[attr-defined]
+        ]
+        if not valid:
+            return min(population, key=lambda ind: ind.fitness.values[0])  # type: ignore[attr-defined]
+        return min(valid, key=lambda ind: ind.fitness.values[0])  # type: ignore[attr-defined]
 
 
 def _best_by_fitness_across_islands(
     islands: list[list[gp.PrimitiveTree]],
 ) -> gp.PrimitiveTree | None:
-    """Avoid building a flat list of all individuals just to find the min."""
-    best: gp.PrimitiveTree | None = None
-    best_fitness = float("inf")
-    for island in islands:
-        for ind in island:
-            if not ind.fitness.valid:  # type: ignore[attr-defined]
-                continue
-            fitness = ind.fitness.values[0]  # type: ignore[attr-defined]
-            if fitness < best_fitness and fitness < _PENALTY_FITNESS[0]:
-                best_fitness = fitness
-                best = ind
-    return best
+    force_simplicity = os.environ.get("VLP_FORCE_SYMBOLIC_SIMPLICITY").lower() in (
+        "true",
+    )
+    if force_simplicity:
+        all_valid = [
+            ind
+            for island in islands
+            for ind in island
+            if ind.fitness.valid and ind.fitness.values[0] < _PENALTY_FITNESS[0]  # type: ignore[attr-defined]
+        ]
+        if not all_valid:
+            return None
 
-# def _best_by_fitness_across_islands(
-#     islands: list[list[gp.PrimitiveTree]],
-# ) -> gp.PrimitiveTree | None:
-#     """Find the best individual across all islands using the same normalised
-#     score as _best_by_fitness, so generation logs are consistent with the
-#     final result.
-#     """
-#     all_valid = [
-#         ind
-#         for island in islands
-#         for ind in island
-#         if ind.fitness.valid and ind.fitness.values[0] < _PENALTY_FITNESS[0]  # type: ignore[attr-defined]
-#     ]
-#     if not all_valid:
-#         return None
-#
-#     errors = [ind.fitness.values[0] for ind in all_valid]  # type: ignore[attr-defined]
-#     complexities = [ind.fitness.values[1] for ind in all_valid]  # type: ignore[attr-defined]
-#
-#     min_e, max_e = min(errors), max(errors)
-#     min_c, max_c = min(complexities), max(complexities)
-#
-#     def normalised_score(ind: gp.PrimitiveTree) -> float:
-#         e = ind.fitness.values[0]  # type: ignore[attr-defined]
-#         c = ind.fitness.values[1]  # type: ignore[attr-defined]
-#         norm_e = (e - min_e) / (max_e - min_e + 1e-12)
-#         norm_c = (c - min_c) / (max_c - min_c + 1e-12)
-#         return norm_e + norm_c
-#
-#     return min(all_valid, key=normalised_score)
+        errors = [ind.fitness.values[0] for ind in all_valid]  # type: ignore[attr-defined]
+        complexities = [ind.fitness.values[1] for ind in all_valid]  # type: ignore[attr-defined]
+
+        min_e, max_e = min(errors), max(errors)
+        min_c, max_c = min(complexities), max(complexities)
+
+        def normalised_score(ind: gp.PrimitiveTree) -> float:
+            e = ind.fitness.values[0]  # type: ignore[attr-defined]
+            c = ind.fitness.values[1]  # type: ignore[attr-defined]
+            norm_e = (e - min_e) / (max_e - min_e + 1e-12)
+            norm_c = (c - min_c) / (max_c - min_c + 1e-12)
+            return norm_e + norm_c
+
+        return min(all_valid, key=normalised_score)
+    else:
+        best: gp.PrimitiveTree | None = None
+        best_fitness = float("inf")
+        for island in islands:
+            for ind in island:
+                if not ind.fitness.valid:  # type: ignore[attr-defined]
+                    continue
+                fitness = ind.fitness.values[0]  # type: ignore[attr-defined]
+                if fitness < best_fitness and fitness < _PENALTY_FITNESS[0]:
+                    best_fitness = fitness
+                    best = ind
+        return best
 
 
 def _evolve_island_worker(
@@ -575,6 +586,7 @@ def _evolve_island_worker(
         tournament_size,
         crossover_rate,
         mutation_rate,
+        parsimony_coefficient,
         const_opt_top_k_ratio,
         fitness_cache,
         rng_seed,
@@ -589,7 +601,14 @@ def _evolve_island_worker(
         key = _tree_key(ind)
         if key in fitness_cache:
             return fitness_cache[key]
-        fit = evaluate_individual(ind, pset, features_scaled, targets_scaled)
+        fit = evaluate_individual(
+            ind,
+            pset,
+            features_scaled,
+            targets_scaled,
+            parsimony_coefficient,
+            max_tree_height,
+        )
         fitness_cache[key] = fit
         return fit
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import concurrent.futures
+import functools
 import logging
 from typing import Callable
 
@@ -14,7 +16,14 @@ logger = logging.getLogger(__name__)
 # TODO: paramterize
 _PENALTY_FITNESS = (1e18, 1e18)
 
+# Timeout (seconds) for the heavy sympy.simplify call
+_SIMPLIFY_TIMEOUT: float = 5.0
+
 _SYMPY_SYMBOLS: dict[int, list[sympy.Symbol]] = {}
+
+_SIMPLIFY_EXECUTOR: concurrent.futures.ThreadPoolExecutor = (
+    concurrent.futures.ThreadPoolExecutor(max_workers=10)
+)
 
 
 def _get_sympy_symbols(n: int) -> list[sympy.Symbol]:
@@ -43,6 +52,28 @@ def _sympy_op_map() -> dict[str, Callable[..., sympy.Expr]]:
             "_protected_sqrt": lambda a: sympy.sqrt(sympy.Abs(a)),
         }
     return _SYMPY_OP_MAP
+
+
+# Fix 3: Cache pset lookup dicts keyed by id(pset) — pset never changes during a pass.
+_PSET_LOOKUP_CACHE: dict[
+    int, tuple[dict[str, gp.Primitive], dict[str, gp.Terminal]]
+] = {}
+
+
+def _get_pset_lookups(
+    pset: gp.PrimitiveSet,
+) -> tuple[dict[str, gp.Primitive], dict[str, gp.Terminal]]:
+    """Return cached (prim_by_name, term_by_name) dicts for the given pset."""
+    key = id(pset)
+    if key not in _PSET_LOOKUP_CACHE:
+        prim_by_name: dict[str, gp.Primitive] = {
+            p.name: p for prims in pset.primitives.values() for p in prims
+        }
+        term_by_name: dict[str, gp.Terminal] = {
+            t.name: t for terms in pset.terminals.values() for t in terms
+        }
+        _PSET_LOOKUP_CACHE[key] = (prim_by_name, term_by_name)
+    return _PSET_LOOKUP_CACHE[key]
 
 
 def _deap_to_sympy(
@@ -105,16 +136,8 @@ def _sympy_to_deap_tokens(
     symbols = _get_sympy_symbols(n_features)
     sym_name_map = {s.name: f"ARG{i}" for i, s in enumerate(symbols)}
 
-    # look-up helpers for pset
-    prim_by_name: dict[str, gp.Primitive] = {}
-    for prims in pset.primitives.values():
-        for p in prims:
-            prim_by_name[p.name] = p
-
-    term_by_name: dict[str, gp.Terminal] = {}
-    for terms in pset.terminals.values():
-        for t in terms:
-            term_by_name[t.name] = t
+    # Fix 3: use cached lookups instead of rebuilding dicts on every call
+    prim_by_name, term_by_name = _get_pset_lookups(pset)
 
     tokens: list[gp.Primitive | gp.Terminal] = []
 
@@ -202,37 +225,95 @@ def _sympy_to_deap_tokens(
     return tokens
 
 
+@functools.lru_cache(maxsize=512)
+def _do_sympy_simplify(expr: sympy.Expr) -> sympy.Expr:
+    """Run the expensive SymPy simplification pipeline (called in a thread)."""
+    # Only run nsimplify if there are floating-point atoms — it's expensive otherwise
+    has_floats = any(isinstance(a, sympy.Float) for a in expr.atoms())
+    if has_floats:
+        result = sympy.nsimplify(expr, rational=False, tolerance=1e-8)
+    else:
+        result = expr
+
+    # Cheap structural cleanup: cancel common factors, rationalize denominators
+    result = sympy.cancel(sympy.radsimp(result))
+
+    op_count = sympy.count_ops(result)
+
+    # Fast-exit: already trivial
+    if op_count <= 3:
+        return result
+
+    # Medium complexity: use expand + factor (cheaper than simplify)
+    if op_count <= 30:
+        candidate = sympy.factor(sympy.expand(result))
+        if sympy.count_ops(candidate) < op_count:
+            return candidate
+        return result
+
+    # Heavy path: restrict simplify to algebraic strategies only (no trig, no special funcs)
+    result = sympy.simplify(result, ratio=1.0, measure=sympy.count_ops)
+    return result
+
+
+def _simplify_with_timeout(expr: sympy.Expr) -> sympy.Expr | None:
+    """Run _do_sympy_simplify with a wall-clock timeout. Returns None on timeout.
+
+    IMPORTANT: do NOT use 'with ThreadPoolExecutor() as ex' here — the context
+    manager calls shutdown(wait=True) on __exit__, which blocks until the SymPy
+    thread finishes and completely defeats the timeout.
+    """
+    future = _SIMPLIFY_EXECUTOR.submit(_do_sympy_simplify, expr)
+    try:
+        return future.result(timeout=_SIMPLIFY_TIMEOUT)
+    except concurrent.futures.TimeoutError:
+        logger.debug("SymPy simplification timed out, skipping individual")
+        future.cancel()  # no-op if already running, but signals intent
+        return None
+    except Exception:
+        return None
+
+
 def _simplify_individual(
     individual: gp.PrimitiveTree,
     pset: gp.PrimitiveSet,
     features: np.ndarray,
     targets: np.ndarray,
     n_features: int,
+    parsimony_coefficient: float,
+    max_tree_height: int,
 ) -> bool:
     """Attempt to algebraically simplify an individual in-place.
 
     Returns True if simplification was applied, False otherwise.
     """
+    # Fix 4: skip individuals we already attempted to simplify (and failed)
+    if getattr(individual, "_simplify_attempted", False):
+        return False
+
     original_len = len(individual)
     if original_len <= 3:
         return False
 
     sym_expr = _deap_to_sympy(individual, n_features)
     if sym_expr is None:
+        individual._simplify_attempted = True  # type: ignore[attr-defined]
         return False
 
-    try:
-        simplified = sympy.nsimplify(sym_expr, rational=False, tolerance=1e-8)
-        simplified = sympy.simplify(simplified)
-    except Exception:
+    # Fix 1 + 2: cheaper pipeline, with timeout guard
+    simplified = _simplify_with_timeout(sym_expr)
+    if simplified is None:
+        individual._simplify_attempted = True  # type: ignore[attr-defined]
         return False
 
     new_tokens = _sympy_to_deap_tokens(simplified, pset, n_features)
     if new_tokens is None:
+        individual._simplify_attempted = True  # type: ignore[attr-defined]
         return False
 
     # only accept if shorter
     if len(new_tokens) >= original_len:
+        individual._simplify_attempted = True  # type: ignore[attr-defined]
         return False
 
     try:
@@ -242,19 +323,25 @@ def _simplify_individual(
             pset,
             features,
             targets,
+            parsimony_coefficient,
+            max_tree_height,
         )
         if new_fitness[0] >= _PENALTY_FITNESS[0]:
+            individual._simplify_attempted = True  # type: ignore[attr-defined]
             return False
 
         # Only accept if the simplified tree does not significantly degrade MSE
         if new_fitness[0] > individual.fitness.values[0] + 1e-6:
+            individual._simplify_attempted = True  # type: ignore[attr-defined]
             return False
     except Exception:
+        individual._simplify_attempted = True  # type: ignore[attr-defined]
         return False
 
-    # replace contents in-place
+    # replace contents in-place; reset the flag so the new (shorter) tree can be re-tried
     individual[0 : len(individual)] = new_tokens
     individual.fitness.values = new_fitness  # type: ignore[attr-defined]
+    individual._simplify_attempted = False  # type: ignore[attr-defined]
     return True
 
 
@@ -264,6 +351,8 @@ def simplify_island(
     features: np.ndarray,
     targets: np.ndarray,
     n_features: int,
+    parsimony_coefficient: float,
+    max_tree_height: int,
 ) -> None:
     """Apply SymPy simplification to all individuals in an island."""
     simplified_count = 0
@@ -274,6 +363,8 @@ def simplify_island(
             features,
             targets,
             n_features,
+            parsimony_coefficient,
+            max_tree_height,
         ):
             simplified_count += 1
     if simplified_count > 0:
