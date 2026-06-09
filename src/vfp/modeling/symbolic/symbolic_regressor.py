@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
-from concurrent.futures import ProcessPoolExecutor
+import time
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -74,6 +75,7 @@ class SymbolicRegressor(VFPModel):
     const_opt_top_k_ratio: float = 0.50
     parallel_islands: bool = True
     scale: bool = False
+    max_eval_time_seconds: float = 1800.0  # hard wall-clock fuse for the whole fit()
     pareto_front_: list[gp.PrimitiveTree] = field(default_factory=list)
     best_individual_: gp.PrimitiveTree | None = None
     _toolbox: base.Toolbox | None = None
@@ -189,7 +191,13 @@ class SymbolicRegressor(VFPModel):
         top_k = max(1, int(island_size * self.const_opt_top_k_ratio))
         elite = sorted(survivors, key=lambda i: i.fitness.values[0])[:top_k]  # type: ignore[attr-defined]
         for ind in elite:
-            optimize_constants(ind, self._pset, features_scaled, targets_scaled)
+            optimize_constants(
+                ind,
+                self._pset,
+                features_scaled,
+                targets_scaled,
+                timeout=float(os.environ.get("VLP_CONST_OPT_TIMEOUT", "2.0")),
+            )
             new_fit = self._evaluate_with_cache(ind, features_scaled, targets_scaled)
             ind.fitness.values = new_fit  # type: ignore[attr-defined]
 
@@ -292,7 +300,13 @@ class SymbolicRegressor(VFPModel):
             top_k = max(1, int(island_size * self.const_opt_top_k_ratio))
             elite = sorted(island, key=lambda i: i.fitness.values[0])[:top_k]  # type: ignore[attr-defined]
             for ind in elite:
-                optimize_constants(ind, self._pset, features_scaled, targets_scaled)
+                optimize_constants(
+                    ind,
+                    self._pset,
+                    features_scaled,
+                    targets_scaled,
+                    timeout=float(os.environ.get("VLP_CONST_OPT_TIMEOUT", "2.0")),
+                )
                 ind.fitness.values = self._evaluate_with_cache(  # type: ignore[attr-defined]
                     ind, features_scaled, targets_scaled
                 )
@@ -317,7 +331,31 @@ class SymbolicRegressor(VFPModel):
             self._executor if (self.parallel_islands and self.n_islands > 1) else None
         )
 
+        fit_start = time.monotonic()
+        fit_deadline = fit_start + self.max_eval_time_seconds
+        # Per-generation timeout: budget spread across all remaining generations,
+        # clamped to a sensible floor so we don't starve early gens.
+        _gen_timeout_floor = 10.0  # seconds – never shorter than this per generation
+
         for generation in range(1, self.generations + 1):
+            # ---- global wall-clock fuse ------------------------------------
+            now = time.monotonic()
+            if now >= fit_deadline:
+                logger.warning(
+                    "fit() wall-clock limit reached (%.0fs); stopping after generation %d",
+                    self.max_eval_time_seconds,
+                    generation - 1,
+                )
+                break
+
+            # Remaining budget split evenly over remaining generations,
+            # with a floor so the first gens aren't starved.
+            remaining_gens = self.generations - generation + 1
+            gen_timeout = max(
+                _gen_timeout_floor,
+                (fit_deadline - now) / remaining_gens,
+            )
+
             if executor is not None:
                 worker_args = [
                     (
@@ -334,24 +372,59 @@ class SymbolicRegressor(VFPModel):
                         self.const_opt_top_k_ratio,
                         dict(self._fitness_cache),
                         island_rng_seeds[i],
+                        float(os.environ.get("VLP_CONST_OPT_TIMEOUT", "2.0")),
                     )
                     for i in range(self.n_islands)
                 ]
-                islands = list(executor.map(_evolve_island_worker, worker_args))
+                try:
+                    futures = [
+                        executor.submit(_evolve_island_worker, args)
+                        for args in worker_args
+                    ]
+                    islands = [
+                        f.result(timeout=gen_timeout) for f in futures
+                    ]
+                except FuturesTimeoutError:
+                    logger.warning(
+                        "Generation %d timed out (%.1fs per-gen budget); "
+                        "keeping previous island state and stopping.",
+                        generation,
+                        gen_timeout,
+                    )
+                    # Cancel still-running futures and break out of the loop.
+                    for f in futures:
+                        f.cancel()
+                    break
                 island_rng_seeds = [
                     int(rng.integers(0, 2**63 - 1)) for _ in range(self.n_islands)
                 ]
             else:
-                islands = [
-                    self._evolve_one_island(
-                        islands[i],
-                        island_size,
-                        features_scaled,
-                        targets_scaled,
-                        rng,
+                gen_start = time.monotonic()
+                evolved: list[list[gp.PrimitiveTree]] = []
+                timed_out = False
+                for i in range(self.n_islands):
+                    if time.monotonic() - gen_start > gen_timeout:
+                        logger.warning(
+                            "Serial generation %d timed out (%.1fs); "
+                            "keeping remaining islands unchanged.",
+                            generation,
+                            gen_timeout,
+                        )
+                        evolved.extend(islands[i:])  # keep the rest untouched
+                        timed_out = True
+                        break
+                    evolved.append(
+                        self._evolve_one_island(
+                            islands[i],
+                            island_size,
+                            features_scaled,
+                            targets_scaled,
+                            rng,
+                        )
                     )
-                    for i in range(self.n_islands)
-                ]
+                islands = evolved
+                if timed_out:
+                    break
 
             if self.simplify_interval > 0 and generation % self.simplify_interval == 0:
                 for island in islands:
@@ -590,6 +663,7 @@ def _evolve_island_worker(
         const_opt_top_k_ratio,
         fitness_cache,
         rng_seed,
+        const_opt_timeout,
     ) = args
 
     toolbox = build_toolbox(
@@ -638,7 +712,7 @@ def _evolve_island_worker(
     top_k = max(1, int(island_size * const_opt_top_k_ratio))
     elite = sorted(survivors, key=lambda i: i.fitness.values[0])[:top_k]
     for ind in elite:
-        optimize_constants(ind, pset, features_scaled, targets_scaled)
+        optimize_constants(ind, pset, features_scaled, targets_scaled, timeout=const_opt_timeout)
         ind.fitness.values = _eval_cached(ind)
 
     return survivors

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from copy import deepcopy
 
 import numpy as np
@@ -218,9 +219,24 @@ def vectorised_evaluate(func: object, features: np.ndarray) -> np.ndarray:
 
 
 def _safe_evaluate_rows(func: object, features: np.ndarray) -> np.ndarray:
-    """Row-by-row fallback with NaN for failures."""
+    """Row-by-row fallback with NaN for failures.
+
+    If the whole batch takes more than ``EVAL_ROW_TIMEOUT`` seconds the
+    remaining rows are filled with NaN so the caller sees a (penalised)
+    finite result rather than hanging indefinitely.
+    """
+    EVAL_ROW_TIMEOUT: float = float(os.environ.get("VLP_EVAL_ROW_TIMEOUT", "5.0"))
     results = np.empty(features.shape[0], dtype=float)
+    deadline = time.monotonic() + EVAL_ROW_TIMEOUT
     for i, row in enumerate(features):
+        if time.monotonic() > deadline:
+            results[i:] = np.nan
+            logger.warning(
+                "Row-level evaluation timed out after %.1fs; filling %d rows with NaN",
+                EVAL_ROW_TIMEOUT,
+                features.shape[0] - i,
+            )
+            break
         try:
             value = func(*row)  # type: ignore[operator]
             if value is None:
@@ -232,7 +248,7 @@ def _safe_evaluate_rows(func: object, features: np.ndarray) -> np.ndarray:
             ValueError,
             ZeroDivisionError,
             OverflowError,
-        ):  # Fixed: parentheses for tuple
+        ):
             results[i] = np.nan
     return results
 
@@ -263,7 +279,22 @@ def optimize_constants(
     pset: gp.PrimitiveSet,
     features: np.ndarray,
     targets: np.ndarray,
+    *,
+    timeout: float | None = None,
 ) -> None:
+    """Optimise numeric constants in *individual* in-place.
+
+    Parameters
+    ----------
+    timeout:
+        Wall-clock budget in seconds.  Defaults to the env var
+        ``VLP_CONST_OPT_TIMEOUT`` (float, default ``2.0``).  The Nelder-Mead
+        callback raises ``StopIteration`` when the budget is exhausted, so the
+        best result found *so far* is still applied.
+    """
+    if timeout is None:
+        timeout = float(os.environ.get("VLP_CONST_OPT_TIMEOUT", "2.0"))
+
     indices = [
         idx
         for idx, node in enumerate(individual)
@@ -291,16 +322,32 @@ def optimize_constants(
 
     initial_fitness = objective(initial)
 
-    # Adaptive iteration budget: small trees converge fast
-    maxiter = min(80, 15 + 8 * len(indices))
+    # Adaptive iteration budget: small trees converge fast.
+    # Capped lower than before to prevent runaway optimisation on large trees.
+    maxiter = min(50, 10 + 5 * len(indices))
 
-    result = minimize(
-        objective,
-        initial,
-        method="Nelder-Mead",
-        options={"maxiter": maxiter, "xatol": 1e-5, "fatol": 1e-7},
-    )
-    best = result.x if result.fun < initial_fitness else initial
+    deadline = time.monotonic() + timeout
+
+    def _timeout_callback(intermediate_result) -> None:  # noqa: ANN001
+        if time.monotonic() > deadline:
+            raise StopIteration("optimize_constants timeout")
+
+    try:
+        result = minimize(
+            objective,
+            initial,
+            method="Nelder-Mead",
+            callback=_timeout_callback,
+            options={"maxiter": maxiter, "xatol": 1e-5, "fatol": 1e-7},
+        )
+        best = result.x if result.fun < initial_fitness else initial
+    except StopIteration:
+        logger.debug(
+            "optimize_constants interrupted by timeout (%.1fs budget)", timeout
+        )
+        # Keep whatever the objective() loop already wrote into individual.
+        return
+
     for idx, value in zip(indices, best, strict=False):
         individual[idx] = make_constant_terminal(float(value))
 
