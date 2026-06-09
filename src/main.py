@@ -7,9 +7,9 @@ import random
 import numpy as np
 
 from toolbox import setup_logging
-from vfp import run_pipeline, run_evaluator
-from vfp.api import create_model
-from vfp.modeling.tuning_metrics import AVAILABLE_METRICS
+
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--tuning-metric",
         type=str,
         help="Metric to optimize during hyperparameter tuning (e.g., mean_squared_error, r2_score).",
-        choices=AVAILABLE_METRICS,
         default="mean_squared_error",
     )
     parser_pipeline.add_argument(
@@ -131,6 +130,9 @@ def main():
         parsed_args.force_symbolic_simplicity
     )
 
+    from vfp.api import create_model
+    from vfp import run_pipeline, run_evaluator
+
     if parsed_args.seed is not None:
         random.seed(parsed_args.seed)
         np.random.seed(parsed_args.seed)
@@ -162,6 +164,8 @@ def main():
             raise ValueError(f"Unsupported model: {parsed_args.model}")
 
         output_folder = parsed_args.output_folder / parsed_args.model
+
+
 
         run_pipeline(
             source_file_path=parsed_args.input_file,
