@@ -103,7 +103,9 @@ def tune_hyperparameters(
                 trial_model.const_opt_top_k_ratio = trial.suggest_float(
                     "const_opt_top_k_ratio", 0.1, 1.0
                 )
-                trial_model.parsimony_coefficient = trial.suggest_float("parsimony_coefficient",1e-7, 1e-3, log=True)
+                trial_model.parsimony_coefficient = trial.suggest_float(
+                    "parsimony_coefficient", 1e-7, 1e-3, log=True
+                )
 
             elif isinstance(trial_model, ElasticNetRegressor):
                 trial_model.alpha = trial.suggest_float("alpha", 1e-4, 10, log=True)

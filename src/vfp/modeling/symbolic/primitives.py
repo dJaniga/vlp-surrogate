@@ -36,9 +36,9 @@ def _protected_sqrt(x):
     return np.sqrt(np.abs(x))
 
 
-def _random_ephemeral_constant() -> float:
+def _random_ephemeral_constant():
     """Ephemeral constant generator for the primitive set."""
-    return float(np.random.uniform(-1.0, 1.0))
+    return np.random.uniform(-1.0, 1.0)
 
 
 def build_primitive_set(

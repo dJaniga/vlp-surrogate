@@ -9,8 +9,6 @@ import numpy as np
 from toolbox import setup_logging
 
 
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -164,8 +162,6 @@ def main():
             raise ValueError(f"Unsupported model: {parsed_args.model}")
 
         output_folder = parsed_args.output_folder / parsed_args.model
-
-
 
         run_pipeline(
             source_file_path=parsed_args.input_file,

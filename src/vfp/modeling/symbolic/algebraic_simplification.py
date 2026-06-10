@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import concurrent.futures
-import functools
 import logging
 from typing import Callable
 
@@ -129,7 +128,7 @@ def _deap_to_sympy(
                 # ephemeral constant
                 try:
                     stack.append(sympy.Float(float(node.value)))
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     return None
         elif isinstance(node, gp.Primitive):
             fn = op_map.get(node.name)
@@ -387,7 +386,7 @@ def _simplify_individual(
     except Exception:
         return False
 
-    individual[0:len(individual)] = new_tokens
+    individual[0 : len(individual)] = new_tokens
     individual.fitness.values = new_fitness  # type: ignore[attr-defined]
 
     logger.debug(
