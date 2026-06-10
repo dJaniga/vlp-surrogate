@@ -1,83 +1,119 @@
 from __future__ import annotations
 
 import logging
+import random
 import time
+import uuid
 from collections import OrderedDict
-from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError, ThreadPoolExecutor
+from concurrent.futures import ALL_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 from deap import base, gp, tools
-
 from sklearn.preprocessing import StandardScaler
 
 from vfp.modeling.base import VFPModel
-from .algebraic_simplification import simplify_island
+from .algebraic_simplification import (
+    clear_simplification_caches,
+    shutdown_simplification_executor,
+    simplify_island,
+)
 from .helpers import (
-    _FORCE_SIMPLICITY,
     _CONST_OPT_TIMEOUT,
+    _FORCE_SIMPLICITY,
     build_seed_individuals,
-    optimize_constants,
+    clear_helper_caches,
     evaluate_individual,
     migrate,
+    optimize_constants,
     vectorised_evaluate,
 )
 from .primitives import build_primitive_set
+from .runtime_options import (
+    DEFAULT_RUNTIME_OPTIONS,
+    CacheMode,
+    ExecutionMode,
+    RuntimeOptions,
+)
 from .toolbox import build_toolbox
 
 logger = logging.getLogger(__name__)
 
 _PENALTY_FITNESS = (1e18, 1e18)
 
-# ---- perf #9: module-level LRU fitness cache (shared by serial path) --------
 _FITNESS_CACHE_MAX = 100_000
 _fitness_cache: OrderedDict[tuple, tuple[float, float]] = OrderedDict()
 
 
-def _fitness_cache_get(key: tuple) -> tuple[float, float] | None:
+def clear_symbolic_regressor_caches() -> None:
+    _fitness_cache.clear()
+    clear_helper_caches()
+    clear_simplification_caches()
+
+
+def _fitness_cache_get(
+    key: tuple,
+    runtime: RuntimeOptions,
+) -> tuple[float, float] | None:
+    if not runtime.fitness_cache_enabled:
+        return None
+
     val = _fitness_cache.get(key)
     if val is not None:
         _fitness_cache.move_to_end(key)
     return val
 
 
-def _fitness_cache_put(key: tuple, val: tuple[float, float]) -> None:
+def _fitness_cache_put(
+    key: tuple,
+    val: tuple[float, float],
+    runtime: RuntimeOptions,
+) -> None:
+    if not runtime.fitness_cache_enabled:
+        return
+
     if key in _fitness_cache:
         _fitness_cache.move_to_end(key)
-    else:
-        if len(_fitness_cache) >= _FITNESS_CACHE_MAX:
-            logger.info("LRU fitness cache full, evicting oldest quarter")
-            # Evict oldest quarter in one shot
-            evict = _FITNESS_CACHE_MAX // 4
-            for _ in range(evict):
-                _fitness_cache.popitem(last=False)
-        _fitness_cache[key] = val
+        return
+
+    if len(_fitness_cache) >= _FITNESS_CACHE_MAX:
+        logger.info("LRU fitness cache full, evicting oldest quarter")
+        evict = _FITNESS_CACHE_MAX // 4
+        for _ in range(evict):
+            _fitness_cache.popitem(last=False)
+
+    _fitness_cache[key] = val
 
 
-# ---- perf #3: tree-key caching on the individual itself --------------------
+def _get_tree_key(
+    ind: gp.PrimitiveTree,
+    runtime: RuntimeOptions,
+) -> tuple:
+    if runtime.static_cache_enabled:
+        key = getattr(ind, "_tree_key_cache", None)
+        if key is not None:
+            return key
 
+    out: list = []
+    for node in ind:
+        if isinstance(node, gp.Terminal):
+            out.append(("T", node.name, node.value))
+        else:
+            out.append(("P", node.name))
 
-def _get_tree_key(ind: gp.PrimitiveTree) -> tuple:
-    """Return a cached structural fingerprint; compute and attach if missing."""
-    key = getattr(ind, "_tree_key_cache", None)
-    if key is None:
-        out: list = []
-        for node in ind:
-            if isinstance(node, gp.Terminal):
-                out.append(("T", node.name, node.value))
-            else:
-                out.append(("P", node.name))
-        key = tuple(out)
+    key = tuple(out)
+
+    if runtime.static_cache_enabled:
         try:
             ind._tree_key_cache = key  # type: ignore[attr-defined]
         except AttributeError:
-            pass  # slots-only class — cache miss every time, still correct
+            pass
+
     return key
 
 
 def _invalidate_tree_key(ind: gp.PrimitiveTree) -> None:
-    """Call whenever the tree structure changes (crossover, mutation)."""
     try:
         del ind._tree_key_cache  # type: ignore[attr-defined]
     except AttributeError:
@@ -85,31 +121,31 @@ def _invalidate_tree_key(ind: gp.PrimitiveTree) -> None:
 
 
 def _shallow_clone(ind: gp.PrimitiveTree) -> gp.PrimitiveTree:
-    """Shallow-clone an individual; copies fitness and key cache."""
     new = ind.__class__(list(ind))
+
     if ind.fitness.valid:  # type: ignore[attr-defined]
         new.fitness.values = ind.fitness.values  # type: ignore[attr-defined]
-    # Propagate cached key — tree content is identical at this point
+
     cached_key = getattr(ind, "_tree_key_cache", None)
     if cached_key is not None:
         try:
             new._tree_key_cache = cached_key  # type: ignore[attr-defined]
         except AttributeError:
             pass
+
     return new
-
-
-# ---- perf #6: module-level selectors, no per-call env var read -------------
 
 
 def _best_by_fitness(population: list[gp.PrimitiveTree]) -> gp.PrimitiveTree | None:
     if not population:
         return None
+
     valid = [
         ind
         for ind in population
         if ind.fitness.valid and ind.fitness.values[0] < _PENALTY_FITNESS[0]  # type: ignore[attr-defined]
     ]
+
     if not valid:
         return min(population, key=lambda ind: ind.fitness.values[0])  # type: ignore[attr-defined]
 
@@ -120,6 +156,7 @@ def _best_by_fitness(population: list[gp.PrimitiveTree]) -> gp.PrimitiveTree | N
         min_c, max_c = min(complexities), max(complexities)
         e_range = max_e - min_e + 1e-12
         c_range = max_c - min_c + 1e-12
+
         return min(
             valid,
             key=lambda ind: (  # type: ignore[attr-defined]
@@ -127,29 +164,31 @@ def _best_by_fitness(population: list[gp.PrimitiveTree]) -> gp.PrimitiveTree | N
                 + (ind.fitness.values[1] - min_c) / c_range  # type: ignore[attr-defined]
             ),
         )
+
     return min(valid, key=lambda ind: ind.fitness.values[0])  # type: ignore[attr-defined]
 
 
 def _best_by_fitness_across_islands(
     islands: list[list[gp.PrimitiveTree]],
 ) -> gp.PrimitiveTree | None:
-    # perf #6: running-best scan instead of building a full valid list
     if _FORCE_SIMPLICITY:
-        # Need range stats — one pass to collect, one to score
         valid = [
             ind
             for island in islands
             for ind in island
             if ind.fitness.valid and ind.fitness.values[0] < _PENALTY_FITNESS[0]  # type: ignore[attr-defined]
         ]
+
         if not valid:
             return None
+
         errors = [ind.fitness.values[0] for ind in valid]  # type: ignore[attr-defined]
         complexities = [ind.fitness.values[1] for ind in valid]  # type: ignore[attr-defined]
         min_e, max_e = min(errors), max(errors)
         min_c, max_c = min(complexities), max(complexities)
         e_range = max_e - min_e + 1e-12
         c_range = max_c - min_c + 1e-12
+
         return min(
             valid,
             key=lambda ind: (  # type: ignore[attr-defined]
@@ -158,43 +197,23 @@ def _best_by_fitness_across_islands(
             ),
         )
 
-    # Fast path: single running-best scan, no list allocation
     best: gp.PrimitiveTree | None = None
     best_fitness = float("inf")
+
     for island in islands:
         for ind in island:
             if not ind.fitness.valid:  # type: ignore[attr-defined]
                 continue
+
             f = ind.fitness.values[0]  # type: ignore[attr-defined]
             if f < best_fitness and f < _PENALTY_FITNESS[0]:
                 best_fitness = f
                 best = ind
+
     return best
 
 
-# ---- perf #7: worker-process initializer builds toolbox once per lifetime --
-
-_worker_toolbox: base.Toolbox | None = None
-
-
-def _worker_init(
-    max_tree_height: int,
-    tournament_size: int,
-    pset: gp.PrimitiveSet,
-) -> None:
-    """Run once when a worker process starts; builds and caches the toolbox."""
-    global _worker_toolbox
-    _worker_toolbox = build_toolbox(
-        pset, max_tree_height=max_tree_height, tournament_size=tournament_size
-    )
-
-
 def _evolve_island_worker(args: tuple) -> tuple[list[gp.PrimitiveTree], dict]:
-    """Module-level worker for ProcessPoolExecutor.
-
-    Returns the evolved island *and* the local fitness cache accumulated
-    during this generation so the main process can merge it back.
-    """
     (
         island,
         island_size,
@@ -202,54 +221,64 @@ def _evolve_island_worker(args: tuple) -> tuple[list[gp.PrimitiveTree], dict]:
         targets_scaled,
         pset,
         max_tree_height,
+        tournament_size,
         parsimony_coefficient,
         crossover_rate,
         mutation_rate,
         const_opt_top_k_ratio,
         rng_seed,
         const_opt_timeout,
-        # perf #1: no fitness_cache arg — workers maintain their own local cache
+        runtime,
+        run_id,
     ) = args
 
-    # perf #7: reuse toolbox built by the initializer; fall back to building if
-    # the worker was somehow not initialised (e.g. in tests without initializer).
-    toolbox = _worker_toolbox
-    if toolbox is None:
-        toolbox = build_toolbox(
-            pset, max_tree_height=max_tree_height, tournament_size=max_tree_height
-        )
-
+    toolbox = build_toolbox(
+        pset,
+        max_tree_height=max_tree_height,
+        tournament_size=tournament_size,
+    )
     rng = np.random.default_rng(rng_seed)
-
-    # perf #1: worker-local cache — no pickling overhead from the main process
     local_cache: dict[tuple, tuple[float, float]] = {}
 
-    def _eval_cached(ind: gp.PrimitiveTree) -> tuple[float, float]:
-        key = _get_tree_key(ind)
-        hit = local_cache.get(key)
-        if hit is not None:
-            return hit
-        fit = evaluate_individual(
+    def eval_cached(ind: gp.PrimitiveTree) -> tuple[float, float]:
+        if runtime.fitness_cache_enabled:
+            key = (run_id, _get_tree_key(ind, runtime))
+            hit = local_cache.get(key)
+            if hit is not None:
+                return hit
+
+            fit = evaluate_individual(
+                ind,
+                pset,
+                features_scaled,
+                targets_scaled,
+                parsimony_coefficient,
+                max_tree_height,
+                runtime=runtime,
+            )
+            local_cache[key] = fit
+            return fit
+
+        return evaluate_individual(
             ind,
             pset,
             features_scaled,
             targets_scaled,
             parsimony_coefficient,
             max_tree_height,
+            runtime=runtime,
         )
-        local_cache[key] = fit
-        return fit
 
     offspring = toolbox.select(island, len(island))
     offspring = [_shallow_clone(ind) for ind in offspring]
 
-    for c1, c2 in zip(offspring[::2], offspring[1::2]):
+    for c1, c2 in zip(offspring[::2], offspring[1::2], strict=False):
         if rng.random() < crossover_rate:
             toolbox.mate(c1, c2)
             for child in (c1, c2):
                 if child.fitness.valid:
                     del child.fitness.values
-                _invalidate_tree_key(child)  # perf #3
+                _invalidate_tree_key(child)
 
     for mutant in offspring:
         if rng.random() >= mutation_rate:
@@ -257,37 +286,38 @@ def _evolve_island_worker(args: tuple) -> tuple[list[gp.PrimitiveTree], dict]:
 
         try:
             toolbox.mutate(mutant)
-
             if mutant.fitness.valid:
                 del mutant.fitness.values
-
             _invalidate_tree_key(mutant)
-
         except Exception:
             pass
 
     for child in offspring:
         if not child.fitness.valid:
-            child.fitness.values = _eval_cached(child)
+            child.fitness.values = eval_cached(child)
 
     survivors = tools.selNSGA2(island + offspring, island_size)
 
-    top_k = max(1, int(island_size * const_opt_top_k_ratio))
-    elite = sorted(survivors, key=lambda i: i.fitness.values[0])[:top_k]
-    for ind in elite:
-        optimize_constants(
-            ind, pset, features_scaled, targets_scaled, timeout=const_opt_timeout
-        )
-        _invalidate_tree_key(ind)  # constants changed → key is stale
-        ind.fitness.values = _eval_cached(ind)
+    if const_opt_top_k_ratio > 0:
+        top_k = max(1, int(island_size * const_opt_top_k_ratio))
+        elite = sorted(survivors, key=lambda i: i.fitness.values[0])[:top_k]
+
+        for ind in elite:
+            optimize_constants(
+                ind,
+                pset,
+                features_scaled,
+                targets_scaled,
+                timeout=const_opt_timeout,
+            )
+            _invalidate_tree_key(ind)
+            ind.fitness.values = eval_cached(ind)
 
     return survivors, local_cache
 
 
 @dataclass(slots=True)
 class SymbolicRegressor(VFPModel):
-    """Hybrid symbolic regressor: GP + NSGA-II + island migration + SymPy simplification."""
-
     population_size: int = 100
     generations: int = 500
     mutation_rate: float = 0.3
@@ -300,11 +330,14 @@ class SymbolicRegressor(VFPModel):
     n_islands: int = 10
     migration_interval: int = 10
     migration_size: int = 10
+    algebraic_simplification: bool = True
     simplify_interval: int = 50
     basic_arithmetic_only: bool = False
     const_opt_top_k_ratio: float = 0.10
     const_opt_interval: int = 5
     parallel_islands: bool = True
+    cache_mode: CacheMode = DEFAULT_RUNTIME_OPTIONS.cache_mode
+    execution_mode: ExecutionMode = DEFAULT_RUNTIME_OPTIONS.execution_mode
     scale: bool = False
     max_eval_time_seconds: float = 1800.0
     pareto_front_: list[gp.PrimitiveTree] = field(default_factory=list)
@@ -320,23 +353,62 @@ class SymbolicRegressor(VFPModel):
     def __str__(self) -> str:
         return "symbolic_regressor"
 
+    @property
+    def runtime(self) -> RuntimeOptions:
+        execution_mode = self.execution_mode
+        if execution_mode == "auto" and not self.parallel_islands:
+            execution_mode = "sequential"
+        return RuntimeOptions(cache_mode=self.cache_mode, execution_mode=execution_mode)
+
     def close(self) -> None:
-        """Shut down the persistent worker pool."""
         if self._executor is not None:
             self._executor.shutdown(wait=True)
             self._executor = None
+        shutdown_simplification_executor()
 
     def get_fit_details(self) -> dict[str, Any]:
         if self.best_individual_ is None:
             raise ValueError("Model has not been fit yet.")
+
         return {
             "pareto_size": len(self.pareto_front_),
             "best_fitness": self.best_individual_.fitness.values[0],  # type: ignore[attr-defined]
             "best_complexity": self.best_individual_.fitness.values[1],  # type: ignore[attr-defined]
             "expression": str(self.best_individual_),
+            "cache_mode": self.cache_mode,
+            "execution_mode": self.execution_mode,
         }
 
-    # ---- scaling ------------------------------------------------------------
+    def _validate_config(self) -> None:
+        if self.population_size <= 0:
+            raise ValueError("population_size must be positive.")
+        if self.generations <= 0:
+            raise ValueError("generations must be positive.")
+        if self.n_islands <= 0:
+            raise ValueError("n_islands must be positive.")
+        if self.migration_interval < 0:
+            raise ValueError("migration_interval must be non-negative.")
+        if self.migration_size < 0:
+            raise ValueError("migration_size must be non-negative.")
+        if self.simplify_interval < 0:
+            raise ValueError("simplify_interval must be non-negative.")
+        if self.const_opt_interval <= 0:
+            raise ValueError("const_opt_interval must be positive.")
+        if not 0 <= self.const_opt_top_k_ratio <= 1:
+            raise ValueError("const_opt_top_k_ratio must be in [0, 1].")
+        if not 0 <= self.mutation_rate <= 1:
+            raise ValueError("mutation_rate must be in [0, 1].")
+        if not 0 <= self.crossover_rate <= 1:
+            raise ValueError("crossover_rate must be in [0, 1].")
+        if self.max_tree_height <= 0:
+            raise ValueError("max_tree_height must be positive.")
+        if self.max_eval_time_seconds <= 0:
+            raise ValueError("max_eval_time_seconds must be positive.")
+        if self.cache_mode not in {"off", "safe", "all"}:
+            raise ValueError("cache_mode must be one of: off, safe, all.")
+        if self.execution_mode not in {"auto", "sequential", "threaded"}:
+            raise ValueError("execution_mode must be one of: auto, sequential, threaded.")
+
     def _scale_features(self, features: np.ndarray, *, fit: bool = False) -> np.ndarray:
         if not self.scale:
             return features
@@ -349,6 +421,7 @@ class SymbolicRegressor(VFPModel):
     def _scale_targets(self, targets: np.ndarray, *, fit: bool = False) -> np.ndarray:
         if not self.scale:
             return np.asarray(targets).flatten()
+
         arr = np.asarray(targets).flatten().reshape(-1, 1)
         return (
             self._target_scaler.fit_transform(arr)
@@ -361,28 +434,41 @@ class SymbolicRegressor(VFPModel):
             return predictions
         return self._target_scaler.inverse_transform(predictions.reshape(-1, 1)).ravel()
 
-    # ---- internal helpers ---------------------------------------------------
     def _evaluate_with_cache(
         self,
         ind: gp.PrimitiveTree,
         features: np.ndarray,
         targets: np.ndarray,
+        runtime: RuntimeOptions,
+        run_id: str,
     ) -> tuple[float, float]:
-        # perf #3: use cached key on individual
-        key = _get_tree_key(ind)
-        cached = _fitness_cache_get(key)
-        if cached is not None:
-            return cached
-        fit = evaluate_individual(
+        if runtime.fitness_cache_enabled:
+            key = (run_id, _get_tree_key(ind, runtime))
+            cached = _fitness_cache_get(key, runtime)
+            if cached is not None:
+                return cached
+
+            fit = evaluate_individual(
+                ind,
+                self._pset,
+                features,
+                targets,
+                self.parsimony_coefficient,
+                self.max_tree_height,
+                runtime=runtime,
+            )
+            _fitness_cache_put(key, fit, runtime)
+            return fit
+
+        return evaluate_individual(
             ind,
             self._pset,
             features,
             targets,
             self.parsimony_coefficient,
             self.max_tree_height,
+            runtime=runtime,
         )
-        _fitness_cache_put(key, fit)
-        return fit
 
     def _evolve_one_island(
         self,
@@ -391,27 +477,29 @@ class SymbolicRegressor(VFPModel):
         features_scaled: np.ndarray,
         targets_scaled: np.ndarray,
         rng: np.random.Generator,
+        runtime: RuntimeOptions,
+        run_id: str,
         *,
         run_const_opt: bool,
     ) -> list[gp.PrimitiveTree]:
-        """Run one generation on a single island and return the survivors."""
         toolbox = self._toolbox
         assert toolbox is not None
 
         offspring = toolbox.select(island, len(island))  # type: ignore[attr-defined]
         offspring = [_shallow_clone(ind) for ind in offspring]
 
-        for c1, c2 in zip(offspring[::2], offspring[1::2]):
+        for c1, c2 in zip(offspring[::2], offspring[1::2], strict=False):
             if rng.random() < self.crossover_rate:
                 toolbox.mate(c1, c2)  # type: ignore[attr-defined]
                 for child in (c1, c2):
                     if child.fitness.valid:  # type: ignore[attr-defined]
                         del child.fitness.values  # type: ignore[attr-defined]
-                    _invalidate_tree_key(child)  # perf #3
+                    _invalidate_tree_key(child)
 
         for mutant in offspring:
             if rng.random() >= self.mutation_rate:
                 continue
+
             try:
                 toolbox.mutate(mutant)
                 if mutant.fitness.valid:
@@ -419,20 +507,23 @@ class SymbolicRegressor(VFPModel):
                 _invalidate_tree_key(mutant)
             except Exception:
                 logger.exception("Error mutating individual")
-                pass
 
         for child in offspring:
             if not child.fitness.valid:  # type: ignore[attr-defined]
                 child.fitness.values = self._evaluate_with_cache(  # type: ignore[attr-defined]
-                    child, features_scaled, targets_scaled
+                    child,
+                    features_scaled,
+                    targets_scaled,
+                    runtime,
+                    run_id,
                 )
 
         survivors = tools.selNSGA2(island + offspring, island_size)
 
-        # perf #2: const-opt only when scheduled
-        if run_const_opt:
+        if run_const_opt and self.const_opt_top_k_ratio > 0:
             top_k = max(1, int(island_size * self.const_opt_top_k_ratio))
             elite = sorted(survivors, key=lambda i: i.fitness.values[0])[:top_k]  # type: ignore[attr-defined]
+
             for ind in elite:
                 optimize_constants(
                     ind,
@@ -441,20 +532,59 @@ class SymbolicRegressor(VFPModel):
                     targets_scaled,
                     timeout=_CONST_OPT_TIMEOUT,
                 )
-                _invalidate_tree_key(ind)  # constants changed
+                _invalidate_tree_key(ind)
                 ind.fitness.values = self._evaluate_with_cache(  # type: ignore[attr-defined]
-                    ind, features_scaled, targets_scaled
+                    ind,
+                    features_scaled,
+                    targets_scaled,
+                    runtime,
+                    run_id,
                 )
 
         return survivors
 
-    # ---- main fit loop ------------------------------------------------------
     def fit(
         self,
         features: np.ndarray,
         targets: np.ndarray,
         features_name: tuple[str, ...] | None = None,
         eval_set: tuple[np.ndarray, np.ndarray] | None = None,
+    ) -> SymbolicRegressor:
+        self._validate_config()
+
+        runtime = self.runtime
+        run_id = uuid.uuid4().hex
+
+        if runtime.force_sequential:
+            self.close()
+
+        saved_random_state = random.getstate()
+        if self.seed is not None:
+            random.seed(self.seed)
+
+        try:
+            return self._fit_impl(
+                features,
+                targets,
+                features_name,
+                eval_set,
+                runtime,
+                run_id,
+            )
+        finally:
+            random.setstate(saved_random_state)
+            _fitness_cache.clear()
+            if not runtime.result_cache_enabled:
+                clear_symbolic_regressor_caches()
+
+    def _fit_impl(
+        self,
+        features: np.ndarray,
+        targets: np.ndarray,
+        features_name: tuple[str, ...] | None,
+        eval_set: tuple[np.ndarray, np.ndarray] | None,
+        runtime: RuntimeOptions,
+        run_id: str,
     ) -> SymbolicRegressor:
         rng = np.random.default_rng(self.seed)
         n_features = features.shape[1]
@@ -465,39 +595,51 @@ class SymbolicRegressor(VFPModel):
             else tuple(f"ARG{i}" for i in range(n_features))
         )
 
-        # Optimisation 1: skip re-scaling when data is unchanged
-        features_id = (features.shape, features.dtype, features.data.tobytes()[:256])
-        if self._last_features_id != features_id:
+        features_id = (
+            features.shape,
+            features.dtype,
+            features.data.tobytes()[:256],
+        )
+
+        if runtime.static_cache_enabled and self._last_features_id == features_id:
             features_scaled = np.ascontiguousarray(
-                self._scale_features(features, fit=True), dtype=np.float64
+                self._scale_features(features, fit=False),
+                dtype=np.float64,
             )
             targets_scaled = np.ascontiguousarray(
-                self._scale_targets(targets, fit=True), dtype=np.float64
+                self._scale_targets(targets, fit=False),
+                dtype=np.float64,
             )
-            self._last_features_id = features_id
         else:
             features_scaled = np.ascontiguousarray(
-                self._scale_features(features, fit=False), dtype=np.float64
+                self._scale_features(features, fit=True),
+                dtype=np.float64,
             )
             targets_scaled = np.ascontiguousarray(
-                self._scale_targets(targets, fit=False), dtype=np.float64
+                self._scale_targets(targets, fit=True),
+                dtype=np.float64,
             )
+            self._last_features_id = features_id if runtime.static_cache_enabled else None
 
         eval_features_scaled = eval_targets_scaled = None
         if eval_set is not None:
             eval_features_scaled = np.ascontiguousarray(
-                self._scale_features(eval_set[0], fit=False), dtype=np.float64
+                self._scale_features(eval_set[0], fit=False),
+                dtype=np.float64,
             )
             eval_targets_scaled = np.ascontiguousarray(
-                self._scale_targets(eval_set[1], fit=False), dtype=np.float64
+                self._scale_targets(eval_set[1], fit=False),
+                dtype=np.float64,
             )
 
-        # Optimisation 2: reuse _pset / _toolbox when config is unchanged
-        if (
+        rebuild_toolbox = (
             self._pset is None
             or self._toolbox is None
             or self._built_features_name != new_feature_names
-        ):
+            or not runtime.static_cache_enabled
+        )
+
+        if rebuild_toolbox:
             self._pset = build_primitive_set(n_features, self.basic_arithmetic_only)
             self._pset.renameArguments(
                 **{f"ARG{idx}": name for idx, name in enumerate(new_feature_names)}
@@ -508,6 +650,10 @@ class SymbolicRegressor(VFPModel):
                 tournament_size=self.tournament_size,
             )
             self._built_features_name = new_feature_names
+
+        assert self._pset is not None
+        assert self._toolbox is not None
+
         self.features_name = new_feature_names
 
         island_size = self.population_size // self.n_islands
@@ -520,20 +666,25 @@ class SymbolicRegressor(VFPModel):
         logger.debug(
             "Initializing symbolic regression",
             extra={
-                k: getattr(self, k)
-                for k in self.__slots__
-                if not k.startswith("_") and not k.endswith("_")
+                "population_size": self.population_size,
+                "generations": self.generations,
+                "n_islands": self.n_islands,
+                "cache_mode": self.cache_mode,
+                "execution_mode": self.execution_mode,
             },
         )
 
-        # ---- initial population --------------------------------------------
-        logger.debug("Building initial population...")
         seed_individuals = build_seed_individuals(
-            self._pset, n_features, include_stochastic=True
+            self._pset,
+            n_features,
+            include_stochastic=True,
         )
+
         islands: list[list[gp.PrimitiveTree]] = []
+
         for island_idx in range(self.n_islands):
             island = self._toolbox.population(n=island_size)  # type: ignore[attr-defined]
+
             if island_idx == 0 and seed_individuals:
                 n_inject = min(len(seed_individuals), island_size // 2)
                 island[:n_inject] = [
@@ -542,58 +693,66 @@ class SymbolicRegressor(VFPModel):
 
             for ind in island:
                 ind.fitness.values = self._evaluate_with_cache(  # type: ignore[attr-defined]
-                    ind, features_scaled, targets_scaled
-                )
-            # perf #2: const_opt_top_k_ratio already lower; always run on init
-            top_k = max(1, int(island_size * self.const_opt_top_k_ratio))
-            elite = sorted(island, key=lambda i: i.fitness.values[0])[:top_k]  # type: ignore[attr-defined]
-            for ind in elite:
-                optimize_constants(
                     ind,
-                    self._pset,
                     features_scaled,
                     targets_scaled,
-                    timeout=_CONST_OPT_TIMEOUT,
+                    runtime,
+                    run_id,
                 )
-                _invalidate_tree_key(ind)
-                ind.fitness.values = self._evaluate_with_cache(  # type: ignore[attr-defined]
-                    ind, features_scaled, targets_scaled
-                )
+
+            if self.const_opt_top_k_ratio > 0:
+                top_k = max(1, int(island_size * self.const_opt_top_k_ratio))
+                elite = sorted(island, key=lambda i: i.fitness.values[0])[:top_k]  # type: ignore[attr-defined]
+
+                for ind in elite:
+                    optimize_constants(
+                        ind,
+                        self._pset,
+                        features_scaled,
+                        targets_scaled,
+                        timeout=_CONST_OPT_TIMEOUT,
+                    )
+                    _invalidate_tree_key(ind)
+                    ind.fitness.values = self._evaluate_with_cache(  # type: ignore[attr-defined]
+                        ind,
+                        features_scaled,
+                        targets_scaled,
+                        runtime,
+                        run_id,
+                    )
+
             island = tools.selNSGA2(island, len(island))
             islands.append(island)
 
-        logger.debug("Starting evolutionary process...")
-
-        # ---- main loop -----------------------------------------------------
         best_eval_fitness = float("inf")
         patience = max(self.generations // 5, 10)
         patience_counter = 0
         best_islands_snapshot: list[list[gp.PrimitiveTree]] | None = None
-        last_best_train_fitness = float("inf")
-
         island_rng_seeds = [
             int(rng.integers(0, 2**63 - 1)) for _ in range(self.n_islands)
         ]
 
-        # perf #7: pass initializer so each worker builds the toolbox once
-        if self.parallel_islands and self.n_islands > 1:
-            if self._executor is None or self._executor._broken:  # type: ignore[attr-defined]
-                self._executor = ThreadPoolExecutor(
-                    max_workers=self.n_islands,
-                    initializer=_worker_init,
-                    initargs=(self.max_tree_height, self.tournament_size, self._pset),
-                )
-        executor = (
-            self._executor if (self.parallel_islands and self.n_islands > 1) else None
+        use_parallel_islands = (
+            self.execution_mode in {"auto", "threaded"}
+            and self.parallel_islands
+            and not runtime.force_sequential
+            and self.n_islands > 1
         )
+
+        executor: ThreadPoolExecutor | None = None
+
+        if use_parallel_islands:
+            if self._executor is None:
+                self._executor = ThreadPoolExecutor(max_workers=self.n_islands)
+            executor = self._executor
 
         fit_start = time.monotonic()
         fit_deadline = fit_start + self.max_eval_time_seconds
-        _gen_timeout_floor = 10.0
+        gen_timeout_floor = 10.0
 
         for generation in range(1, self.generations + 1):
-            # ---- wall-clock fuse -------------------------------------------
             now = time.monotonic()
+
             if now >= fit_deadline:
                 logger.warning(
                     "fit() wall-clock limit reached (%.0fs); stopping after generation %d",
@@ -603,9 +762,7 @@ class SymbolicRegressor(VFPModel):
                 break
 
             remaining_gens = self.generations - generation + 1
-            gen_timeout = max(_gen_timeout_floor, (fit_deadline - now) / remaining_gens)
-
-            # perf #2: throttle const-opt to every const_opt_interval generations
+            gen_timeout = max(gen_timeout_floor, (fit_deadline - now) / remaining_gens)
             run_const_opt = generation % self.const_opt_interval == 0
 
             if executor is not None:
@@ -617,43 +774,57 @@ class SymbolicRegressor(VFPModel):
                         targets_scaled,
                         self._pset,
                         self.max_tree_height,
+                        self.tournament_size,
                         self.parsimony_coefficient,
                         self.crossover_rate,
                         self.mutation_rate,
                         self.const_opt_top_k_ratio if run_const_opt else 0.0,
                         island_rng_seeds[i],
                         _CONST_OPT_TIMEOUT,
-                        # perf #1: no fitness_cache argument
+                        runtime,
+                        run_id,
                     )
                     for i in range(self.n_islands)
                 ]
-                try:
-                    futures = [
-                        executor.submit(_evolve_island_worker, args)
-                        for args in worker_args
-                    ]
-                    results = [f.result(timeout=gen_timeout) for f in futures]
-                    islands = [r[0] for r in results]
-                    # perf #1: merge worker-local caches back into the main LRU cache
-                    for _, worker_cache in results:
-                        for k, v in worker_cache.items():
-                            _fitness_cache_put(k, v)
-                except FuturesTimeoutError:
+
+                futures: list[Future] = [
+                    executor.submit(_evolve_island_worker, args)
+                    for args in worker_args
+                ]
+
+                done, not_done = wait(
+                    futures,
+                    timeout=gen_timeout,
+                    return_when=ALL_COMPLETED,
+                )
+
+                if not_done:
                     logger.warning(
                         "Generation %d timed out (%.1fs per-gen budget); stopping.",
                         generation,
                         gen_timeout,
                     )
-                    for f in futures:
-                        f.cancel()
+                    for future in not_done:
+                        future.cancel()
                     break
+
+                results = [future.result() for future in done]
+                islands = [r[0] for r in results]
+
+                if runtime.fitness_cache_enabled:
+                    for _, worker_cache in results:
+                        for k, v in worker_cache.items():
+                            _fitness_cache_put(k, v, runtime)
+
                 island_rng_seeds = [
                     int(rng.integers(0, 2**63 - 1)) for _ in range(self.n_islands)
                 ]
+
             else:
                 gen_start = time.monotonic()
                 evolved: list[list[gp.PrimitiveTree]] = []
                 timed_out = False
+
                 for i in range(self.n_islands):
                     if time.monotonic() - gen_start > gen_timeout:
                         logger.warning(
@@ -664,6 +835,7 @@ class SymbolicRegressor(VFPModel):
                         evolved.extend(islands[i:])
                         timed_out = True
                         break
+
                     evolved.append(
                         self._evolve_one_island(
                             islands[i],
@@ -671,17 +843,27 @@ class SymbolicRegressor(VFPModel):
                             features_scaled,
                             targets_scaled,
                             rng,
+                            runtime,
+                            run_id,
                             run_const_opt=run_const_opt,
                         )
                     )
+
                 islands = evolved
+
                 if timed_out:
                     break
 
-            if self.simplify_interval > 0 and generation % self.simplify_interval == 0:
+            if (
+                self.algebraic_simplification
+                and self.simplify_interval > 0
+                and generation % self.simplify_interval == 0
+            ):
                 for island in islands:
                     front = tools.sortNondominated(
-                        island, len(island), first_front_only=True
+                        island,
+                        len(island),
+                        first_front_only=True,
                     )[0]
                     simplify_island(
                         front,
@@ -691,6 +873,7 @@ class SymbolicRegressor(VFPModel):
                         n_features,
                         self.parsimony_coefficient,
                         self.max_tree_height,
+                        runtime,
                     )
 
             if (
@@ -705,12 +888,15 @@ class SymbolicRegressor(VFPModel):
             if best and best.fitness.values[0] < self.tolerance:  # type: ignore[attr-defined]
                 logger.debug(
                     "Early stopping reached (train tolerance)",
-                    extra={"generation": generation, "fitness": best.fitness.values[0]},  # type: ignore[attr-defined]
+                    extra={
+                        "generation": generation,
+                        "fitness": best.fitness.values[0],  # type: ignore[attr-defined]
+                    },
                 )
                 best_islands_snapshot = islands
                 break
 
-            min_delta = 1e-8
+            val_fitness = None
 
             if (
                 best is not None
@@ -724,15 +910,14 @@ class SymbolicRegressor(VFPModel):
                     eval_targets_scaled,
                     self.parsimony_coefficient,
                     self.max_tree_height,
+                    runtime=runtime,
                 )
 
-                improved = val_fitness < (best_eval_fitness - min_delta)
+                improved = val_fitness < (best_eval_fitness - 1e-8)
 
                 if improved:
                     best_eval_fitness = val_fitness
-                    last_best_train_fitness = best.fitness.values[0]
                     patience_counter = 0
-
                     best_islands_snapshot = [
                         [_shallow_clone(ind) for ind in island] for island in islands
                     ]
@@ -752,10 +937,6 @@ class SymbolicRegressor(VFPModel):
                         )
                         break
 
-            # perf #8: only snapshot when there's no eval_set AND we actually
-            # need a reference to the current state (i.e. no snapshot yet).
-            # The finalization block below falls back gracefully when None.
-
             logger.debug(
                 "Generation complete",
                 extra={
@@ -763,24 +944,23 @@ class SymbolicRegressor(VFPModel):
                     "train_fitness": best.fitness.values[0] if best else None,
                     "train_complexity": best.fitness.values[1] if best else None,
                     "best_val_fitness": best_eval_fitness,
-                    "current_val_fitness": val_fitness if best else None,
+                    "current_val_fitness": val_fitness,
                     "patience_counter": patience_counter,
                 },
             )
 
-        # ---- finalize ------------------------------------------------------
-        # perf #8: best_islands_snapshot may be None when no eval_set was
-        # provided and no early-stop fired — just use the final islands.
         if best_islands_snapshot is not None and best_islands_snapshot is not islands:
             islands = best_islands_snapshot
         else:
-            islands = [[_shallow_clone(ind) for ind in isl] for isl in islands]
+            islands = [[_shallow_clone(ind) for ind in island] for island in islands]
 
         all_individuals = [ind for island in islands for ind in island]
 
-        if self.simplify_interval > 0:
+        if self.algebraic_simplification and self.simplify_interval > 0:
             front = tools.sortNondominated(
-                all_individuals, len(all_individuals), first_front_only=True
+                all_individuals,
+                len(all_individuals),
+                first_front_only=True,
             )[0]
             simplify_island(
                 front,
@@ -790,29 +970,35 @@ class SymbolicRegressor(VFPModel):
                 n_features,
                 self.parsimony_coefficient,
                 self.max_tree_height,
+                runtime,
             )
 
         self.pareto_front_ = tools.sortNondominated(
-            all_individuals, len(all_individuals), first_front_only=True
+            all_individuals,
+            len(all_individuals),
+            first_front_only=True,
         )[0]
 
         self.best_individual_ = _best_by_fitness(self.pareto_front_)
+
         if self.best_individual_ is None:
             raise RuntimeError("Symbolic regression did not produce a valid model.")
 
         logger.debug("Symbolic regression complete", extra=self.get_fit_details())
-        _fitness_cache.clear()
         return self
 
-    # ---- predict ------------------------------------------------------------
     def predict(self, features: np.ndarray) -> np.ndarray:
         if self.best_individual_ is None or self._pset is None:
             raise ValueError("Model has not been fit yet.")
+
         features_scaled = self._scale_features(features, fit=False)
         func = gp.compile(self.best_individual_, self._pset)
         predictions_scaled = vectorised_evaluate(func, features_scaled)
         predictions = self._unscale_predictions(predictions_scaled)
+
         logger.debug(
-            "Symbolic prediction complete", extra={"samples": int(features.shape[0])}
+            "Symbolic prediction complete",
+            extra={"samples": int(features.shape[0])},
         )
+
         return predictions
