@@ -29,7 +29,7 @@ _SYM_NAME_MAP: dict[int, dict[str, str]] = {}
 # A couple of GIL-bound SymPy worker threads is plenty; more than that just
 # thrashes under the GIL while one heavy call holds it.
 _SIMPLIFY_EXECUTOR: concurrent.futures.ThreadPoolExecutor = (
-    concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    concurrent.futures.ThreadPoolExecutor(max_workers=10)
 )
 
 # Resolve a couple of hot attribute lookups once at import time.

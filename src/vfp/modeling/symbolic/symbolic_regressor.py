@@ -3,13 +3,12 @@ from __future__ import annotations
 import logging
 import time
 from collections import OrderedDict
-from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 from deap import base, gp, tools
-from line_profiler_pycharm import profile
 
 from sklearn.preprocessing import StandardScaler
 
@@ -304,8 +303,8 @@ class SymbolicRegressor(VFPModel):
     simplify_interval: int = 50
     basic_arithmetic_only: bool = False
     const_opt_top_k_ratio: float = 0.10
-    const_opt_interval: int = 1
-    parallel_islands: bool = False
+    const_opt_interval: int = 5
+    parallel_islands: bool = True
     scale: bool = False
     max_eval_time_seconds: float = 1800.0
     pareto_front_: list[gp.PrimitiveTree] = field(default_factory=list)
@@ -314,7 +313,7 @@ class SymbolicRegressor(VFPModel):
     _pset: gp.PrimitiveSet | None = None
     _feature_scaler: StandardScaler = field(default_factory=StandardScaler)
     _target_scaler: StandardScaler = field(default_factory=StandardScaler)
-    _executor: ProcessPoolExecutor | None = field(default=None, repr=False)
+    _executor: ThreadPoolExecutor | None = field(default=None, repr=False)
     _last_features_id: tuple | None = field(default=None, repr=False)
     _built_features_name: tuple[str, ...] | None = field(default=None, repr=False)
 
@@ -450,7 +449,6 @@ class SymbolicRegressor(VFPModel):
         return survivors
 
     # ---- main fit loop ------------------------------------------------------
-    @profile
     def fit(
         self,
         features: np.ndarray,
@@ -580,7 +578,7 @@ class SymbolicRegressor(VFPModel):
         # perf #7: pass initializer so each worker builds the toolbox once
         if self.parallel_islands and self.n_islands > 1:
             if self._executor is None or self._executor._broken:  # type: ignore[attr-defined]
-                self._executor = ProcessPoolExecutor(
+                self._executor = ThreadPoolExecutor(
                     max_workers=self.n_islands,
                     initializer=_worker_init,
                     initargs=(self.max_tree_height, self.tournament_size, self._pset),
