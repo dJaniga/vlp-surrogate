@@ -33,9 +33,9 @@ _FORCE_SIMPLICITY: bool = (
 )
 
 # ---- perf #9: LRU fitness cache (OrderedDict-based, evicts oldest half) -----
-_FITNESS_CACHE_MAX = 20_000
+_FITNESS_CACHE_MAX = 100_000
 _COMPILE_CACHE: OrderedDict[str, object] = OrderedDict()
-_COMPILE_CACHE_MAX = 20_000
+_COMPILE_CACHE_MAX = 100_000
 
 
 def _compute_metric(preds: np.ndarray, targets: np.ndarray, metric: str) -> float:
@@ -675,6 +675,7 @@ def _compile_cached(individual: gp.PrimitiveTree, pset: gp.PrimitiveSet) -> obje
     if func is None:
         func = gp.compile(individual, pset)
         if len(_COMPILE_CACHE) >= _COMPILE_CACHE_MAX:
+            logger.info("LRU compile cache full, evicting oldest half")
             # Evict oldest half in one shot to amortise the cost
             evict_count = _COMPILE_CACHE_MAX // 2
             for _ in range(evict_count):

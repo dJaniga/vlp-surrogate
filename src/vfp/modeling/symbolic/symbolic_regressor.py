@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 from deap import base, gp, tools
+from line_profiler_pycharm import profile
+
 from sklearn.preprocessing import StandardScaler
 
 from vfp.modeling.base import VFPModel
@@ -30,7 +32,7 @@ logger = logging.getLogger(__name__)
 _PENALTY_FITNESS = (1e18, 1e18)
 
 # ---- perf #9: module-level LRU fitness cache (shared by serial path) --------
-_FITNESS_CACHE_MAX = 50_000
+_FITNESS_CACHE_MAX = 100_000
 _fitness_cache: OrderedDict[tuple, tuple[float, float]] = OrderedDict()
 
 
@@ -46,6 +48,7 @@ def _fitness_cache_put(key: tuple, val: tuple[float, float]) -> None:
         _fitness_cache.move_to_end(key)
     else:
         if len(_fitness_cache) >= _FITNESS_CACHE_MAX:
+            logger.info("LRU fitness cache full, evicting oldest quarter")
             # Evict oldest quarter in one shot
             evict = _FITNESS_CACHE_MAX // 4
             for _ in range(evict):
@@ -302,7 +305,7 @@ class SymbolicRegressor(VFPModel):
     basic_arithmetic_only: bool = False
     const_opt_top_k_ratio: float = 0.10
     const_opt_interval: int = 1
-    parallel_islands: bool = True
+    parallel_islands: bool = False
     scale: bool = False
     max_eval_time_seconds: float = 1800.0
     pareto_front_: list[gp.PrimitiveTree] = field(default_factory=list)
@@ -447,6 +450,7 @@ class SymbolicRegressor(VFPModel):
         return survivors
 
     # ---- main fit loop ------------------------------------------------------
+    @profile
     def fit(
         self,
         features: np.ndarray,
