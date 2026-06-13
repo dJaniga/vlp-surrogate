@@ -62,8 +62,8 @@ class ModelWrapper:
         features_name: tuple[str, ...] | None = None,
         optimize_hyperparameters: bool = False,
         tuning_metric: str = "mean_squared_error",
-        outer_splits: int = 5,
-        inner_splits: int = 5,
+        outer_splits: int = 2,
+        inner_splits: int = 2,
     ) -> VFPModel:
 
         logger.info(f">>>> Starting fitting model {self.model}...")

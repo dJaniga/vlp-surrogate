@@ -86,7 +86,7 @@ def tune_hyperparameters(
                 trial_model.xgb_kwargs.update(kwargs)
             elif isinstance(trial_model, SymbolicRegressor):
                 trial_model.mutation_rate = trial.suggest_float(
-                    "mutation_rate", 0.05, 0.5
+                    "mutation_rate", 0.05, 0.7
                 )
                 trial_model.crossover_rate = trial.suggest_float(
                     "crossover_rate", 0.4, 0.95

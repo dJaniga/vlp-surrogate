@@ -1,21 +1,25 @@
 from __future__ import annotations
 
-import concurrent.futures
 import logging
+import time
 from typing import Callable
 
 import numpy as np
 import sympy
 from deap import creator, gp
 
-from .helpers import evaluate_individual, make_constant_terminal
+from .helpers import evaluate_individual, invalidate_individual_caches, make_constant_terminal
 from .runtime_options import DEFAULT_RUNTIME_OPTIONS, RuntimeOptions
 
 logger = logging.getLogger(__name__)
 
 _PENALTY_FITNESS = (1e18, 1e18)
-_SIMPLIFY_TIMEOUT: float = 5.0
-_INLINE_OP_THRESHOLD: int = 8
+
+_SIMPLIFY_TIMEOUT: float = 0.25
+_SIMPLIFY_PASS_BUDGET_SECONDS: float = 2.0
+_INLINE_OP_THRESHOLD: int = 40
+_MAX_SIMPLIFY_TREE_SIZE: int = 80
+_MAX_SIMPLIFY_OPS: int = 120
 
 _SYMPY_SYMBOLS: dict[int, list[sympy.Symbol]] = {}
 _SYM_NAME_MAP: dict[int, dict[str, str]] = {}
@@ -26,24 +30,12 @@ _PSET_LOOKUP_CACHE: dict[
 _RESULT_CACHE: dict[tuple, list[gp.Primitive | gp.Terminal] | None] = {}
 _RESULT_CACHE_MAX = 50_000
 
-_SIMPLIFY_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
-
 _Float = sympy.Float
 _count_ops = sympy.count_ops
 
 
-def _get_simplify_executor() -> concurrent.futures.ThreadPoolExecutor:
-    global _SIMPLIFY_EXECUTOR
-    if _SIMPLIFY_EXECUTOR is None:
-        _SIMPLIFY_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=10)
-    return _SIMPLIFY_EXECUTOR
-
-
 def shutdown_simplification_executor() -> None:
-    global _SIMPLIFY_EXECUTOR
-    if _SIMPLIFY_EXECUTOR is not None:
-        _SIMPLIFY_EXECUTOR.shutdown(wait=True)
-        _SIMPLIFY_EXECUTOR = None
+    return None
 
 
 def clear_simplification_caches() -> None:
@@ -53,13 +45,6 @@ def clear_simplification_caches() -> None:
     _PSET_LOOKUP_CACHE.clear()
     _RESULT_CACHE.clear()
     _SYMPY_OP_MAP = None
-
-
-def _invalidate_tree_key(individual: gp.PrimitiveTree) -> None:
-    try:
-        del individual._tree_key_cache  # type: ignore[attr-defined]
-    except AttributeError:
-        pass
 
 
 def _get_sympy_symbols(n: int, runtime: RuntimeOptions) -> list[sympy.Symbol]:
@@ -88,10 +73,8 @@ def _sympy_op_map(runtime: RuntimeOptions) -> dict[str, Callable[..., sympy.Expr
             "_abs": lambda a: sympy.Abs(a),
             "_protected_sqrt": lambda a: sympy.sqrt(sympy.Abs(a)),
         }
-
         if not runtime.static_cache_enabled:
             return op_map
-
         _SYMPY_OP_MAP = op_map
 
     return _SYMPY_OP_MAP
@@ -180,12 +163,11 @@ def _sympy_to_deap_tokens(
     runtime: RuntimeOptions,
 ) -> list[gp.Primitive | gp.Terminal] | None:
     _get_sympy_symbols(n_features, runtime)
-
-    if runtime.static_cache_enabled:
-        sym_name_map = _SYM_NAME_MAP[n_features]
-    else:
-        sym_name_map = {f"ARG{i}": f"ARG{i}" for i in range(n_features)}
-
+    sym_name_map = (
+        _SYM_NAME_MAP[n_features]
+        if runtime.static_cache_enabled
+        else {f"ARG{i}": f"ARG{i}" for i in range(n_features)}
+    )
     prim_by_name, term_by_name = _get_pset_lookups(pset, runtime)
     tokens: list[gp.Primitive | gp.Terminal] = []
 
@@ -219,7 +201,6 @@ def _sympy_to_deap_tokens(
 
         if isinstance(e, sympy.Pow):
             base_expr, exp_expr = e.args
-
             if exp_expr == 2:
                 prim = prim_by_name.get("_square")
                 if prim is None:
@@ -277,10 +258,10 @@ def _has_radical(expr: sympy.Expr) -> bool:
 
 
 def _do_sympy_simplify(expr: sympy.Expr) -> sympy.Expr:
-    if expr.has(_Float):
-        result = sympy.nsimplify(expr, rational=False, tolerance=1e-8)
-    else:
-        result = expr
+    result = expr
+
+    if result.has(_Float):
+        result = sympy.nsimplify(result, rational=False, tolerance=1e-8)
 
     if _has_radical(result):
         result = sympy.radsimp(result)
@@ -299,21 +280,30 @@ def _do_sympy_simplify(expr: sympy.Expr) -> sympy.Expr:
     return candidate if _count_ops(candidate) < op_count else result
 
 
-def _simplify_expr(expr: sympy.Expr, runtime: RuntimeOptions) -> sympy.Expr | None:
-    if runtime.force_sequential or _count_ops(expr) <= _INLINE_OP_THRESHOLD:
-        try:
-            return _do_sympy_simplify(expr)
-        except Exception:
-            return None
+def _simplify_expr(expr: sympy.Expr) -> sympy.Expr | None:
+    try:
+        op_count = _count_ops(expr)
+    except Exception:
+        return None
 
-    future = _get_simplify_executor().submit(_do_sympy_simplify, expr)
+    if op_count > _MAX_SIMPLIFY_OPS:
+        return None
+
+    start = time.monotonic()
 
     try:
-        return future.result(timeout=_SIMPLIFY_TIMEOUT)
-    except concurrent.futures.TimeoutError:
-        logger.debug("SymPy simplification timed out, skipping individual")
-        future.cancel()
-        return None
+        if op_count <= 3:
+            result = sympy.cancel(expr)
+        elif op_count <= _INLINE_OP_THRESHOLD:
+            result = _do_sympy_simplify(expr)
+        else:
+            result = sympy.cancel(expr)
+
+        if time.monotonic() - start > _SIMPLIFY_TIMEOUT:
+            return None
+
+        return result
+
     except Exception:
         return None
 
@@ -324,11 +314,14 @@ def _compute_simplified_tokens(
     n_features: int,
     runtime: RuntimeOptions,
 ) -> list[gp.Primitive | gp.Terminal] | None:
+    if len(individual) > _MAX_SIMPLIFY_TREE_SIZE:
+        return None
+
     sym_expr = _deap_to_sympy(individual, n_features, runtime)
     if sym_expr is None:
         return None
 
-    simplified = _simplify_expr(sym_expr, runtime)
+    simplified = _simplify_expr(sym_expr)
     if simplified is None:
         return None
 
@@ -350,7 +343,7 @@ def _simplify_individual(
     runtime: RuntimeOptions,
 ) -> bool:
     original_len = len(individual)
-    if original_len <= 3:
+    if original_len <= 3 or original_len > _MAX_SIMPLIFY_TREE_SIZE:
         return False
 
     if runtime.result_cache_enabled:
@@ -360,12 +353,7 @@ def _simplify_individual(
             if new_tokens is None:
                 return False
         else:
-            new_tokens = _compute_simplified_tokens(
-                individual,
-                pset,
-                n_features,
-                runtime,
-            )
+            new_tokens = _compute_simplified_tokens(individual, pset, n_features, runtime)
             if len(_RESULT_CACHE) < _RESULT_CACHE_MAX:
                 _RESULT_CACHE[key] = new_tokens
             if new_tokens is None:
@@ -397,7 +385,7 @@ def _simplify_individual(
         return False
 
     individual[0 : len(individual)] = new_tokens
-    _invalidate_tree_key(individual)
+    invalidate_individual_caches(individual)
     individual.fitness.values = new_fitness  # type: ignore[attr-defined]
 
     logger.debug(
@@ -416,10 +404,24 @@ def simplify_island(
     parsimony_coefficient: float,
     max_tree_height: int,
     runtime: RuntimeOptions = DEFAULT_RUNTIME_OPTIONS,
+    *,
+    min_tree_size: int = 8,
+    pass_budget_seconds: float = _SIMPLIFY_PASS_BUDGET_SECONDS,
 ) -> None:
     simplified_count = 0
+    started = time.monotonic()
 
     for individual in island:
+        if time.monotonic() - started > pass_budget_seconds:
+            logger.debug(
+                "Simplification pass budget exhausted",
+                extra={"budget_seconds": pass_budget_seconds, "total": len(island)},
+            )
+            break
+
+        if len(individual) < min_tree_size:
+            continue
+
         if _simplify_individual(
             individual,
             pset,

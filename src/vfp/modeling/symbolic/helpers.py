@@ -32,13 +32,67 @@ _FORCE_SIMPLICITY: bool = (
     os.environ.get("VLP_FORCE_SYMBOLIC_SIMPLICITY", "").lower() == "true"
 )
 
-_COMPILE_CACHE: OrderedDict[str, object] = OrderedDict()
+_COMPILE_CACHE: OrderedDict[tuple, object] = OrderedDict()
 _COMPILE_CACHE_MAX = 100_000
 _DEADLINE_CHECK_INTERVAL = 64
 
 
 def clear_helper_caches() -> None:
     _COMPILE_CACHE.clear()
+
+
+def tree_key(individual: gp.PrimitiveTree, runtime: RuntimeOptions) -> tuple:
+    if runtime.static_cache_enabled:
+        cached = getattr(individual, "_tree_key_cache", None)
+        if cached is not None:
+            return cached
+
+    out: list = []
+    for node in individual:
+        if isinstance(node, gp.Terminal):
+            out.append(("T", node.name, node.value))
+        else:
+            out.append(("P", node.name))
+    key = tuple(out)
+
+    if runtime.static_cache_enabled:
+        try:
+            individual._tree_key_cache = key  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
+
+    return key
+
+
+def invalidate_individual_caches(individual: gp.PrimitiveTree) -> None:
+    for attr in ("_tree_key_cache", "_has_numeric_constants_cache"):
+        try:
+            delattr(individual, attr)
+        except AttributeError:
+            pass
+
+
+def has_numeric_constants(
+    individual: gp.PrimitiveTree,
+    runtime: RuntimeOptions = DEFAULT_RUNTIME_OPTIONS,
+) -> bool:
+    if runtime.static_cache_enabled:
+        cached = getattr(individual, "_has_numeric_constants_cache", None)
+        if cached is not None:
+            return bool(cached)
+
+    result = any(
+        isinstance(node, gp.Terminal) and isinstance(node.value, (int, float))
+        for node in individual
+    )
+
+    if runtime.static_cache_enabled:
+        try:
+            individual._has_numeric_constants_cache = result  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
+
+    return result
 
 
 def _compute_metric(preds: np.ndarray, targets: np.ndarray, metric: str) -> float:
@@ -65,15 +119,10 @@ def _validate_prefix(tokens: list) -> bool:
     return slots == 0
 
 
-def _commit(
-    tokens: list,
-    pset: gp.PrimitiveSet,
-    label: str,
-) -> gp.PrimitiveTree | None:
+def _commit(tokens: list, pset: gp.PrimitiveSet, label: str) -> gp.PrimitiveTree | None:
     if not _validate_prefix(tokens):
         logger.warning("Malformed seed skipped: %s", label)
         return None
-
     try:
         return creator.SymbolicIndividual(tokens)  # type: ignore[attr-defined]
     except Exception as exc:
@@ -93,10 +142,8 @@ def _linear(
 ) -> list:
     if not xs:
         raise ValueError("xs must contain at least one terminal")
-
     if coeffs is None:
         coeffs = [1.0] * len(xs)
-
     if len(coeffs) != len(xs):
         raise ValueError("coeffs length must match xs length")
 
@@ -143,7 +190,6 @@ def build_seed_individuals(
     sub = p("_sub")
     mul = p("_mul")
     div = p("_protected_div")
-
     if add is None or sub is None or mul is None or div is None:
         raise ValueError("Primitive set is missing required arithmetic primitives.")
 
@@ -151,7 +197,6 @@ def build_seed_individuals(
     square = p("_square")
     abs_p = p("_abs")
     neg = p("_neg")
-
     args = [a(i) for i in range(n_features)]
     pairs = list(itertools.combinations(range(n_features), 2))
     raw: list[tuple[list, str]] = []
@@ -162,33 +207,25 @@ def build_seed_individuals(
     for i, xi in enumerate(args):
         s([xi], f"identity_{i}")
         s(_scaled(mul, 1.0, xi), f"scaled_{i}")
-
         if square is not None:
             s([square, xi], f"square_{i}")
             s(_bin(add, [square, xi], [xi]), f"square_plus_linear_{i}")
             s(_bin(add, [mul, _c(1.0), square, xi], [mul, _c(1.0), xi]), f"scaled_square_linear_{i}")
-
         if abs_p is not None:
             s([abs_p, xi], f"abs_{i}")
-
         if neg is not None:
             s([neg, xi], f"neg_{i}")
-
         if sqrt is not None:
             s([sqrt, xi], f"sqrt_{i}")
-
         if sqrt is not None and square is not None:
             s(_un(sqrt, [square, xi]), f"sqrt_square_{i}")
-
         if abs_p is not None and square is not None:
             s([square, abs_p, xi], f"square_abs_{i}")
-
         if neg is not None and square is not None:
             s([neg, square, xi], f"neg_square_{i}")
 
     for i, j in pairs:
         xi, xj = args[i], args[j]
-
         s(_bin(add, [xi], [xj]), f"sum_{i}_{j}")
         s(_linear(add, mul, [xi, xj]), f"linear_{i}_{j}")
         s(_bin(sub, [xi], [xj]), f"diff_{i}_{j}")
@@ -225,19 +262,15 @@ def build_seed_individuals(
 
     for i, j in pairs:
         xi, xj = args[i], args[j]
-        lin = _linear(add, mul, [xi, xj])
-        prod = [mul, _c(1.0), mul, xi, xj]
-        s(_bin(add, lin, prod), f"linear_interaction_{i}_{j}")
+        s(_bin(add, _linear(add, mul, [xi, xj]), [mul, _c(1.0), mul, xi, xj]), f"linear_interaction_{i}_{j}")
 
     if square is not None:
         for i, j in pairs:
             xi, xj = args[i], args[j]
             quad_i = _bin(add, [mul, _c(1.0), square, xi], [mul, _c(1.0), xi])
-            lin_j = [mul, _c(1.0), xj]
-            s(_bin(add, quad_i, lin_j), f"quadratic_linear_{i}_{j}")
+            s(_bin(add, quad_i, [mul, _c(1.0), xj]), f"quadratic_linear_{i}_{j}")
 
-    triples = list(itertools.combinations(range(n_features), 3))
-    for i, j, k in triples[:6]:
+    for i, j, k in list(itertools.combinations(range(n_features), 3))[:6]:
         s([mul, args[i], mul, args[j], args[k]], f"triple_{i}_{j}_{k}")
 
     if n_features >= 2:
@@ -245,20 +278,17 @@ def build_seed_individuals(
 
     if n_features >= 3:
         for skip in range(n_features):
-            active = [args[k] for k in range(n_features) if k != skip]
-            s(_linear(add, mul, active), f"leave_out_{skip}")
+            s(_linear(add, mul, [args[k] for k in range(n_features) if k != skip]), f"leave_out_{skip}")
 
     if 2 <= n_features <= 6:
-        lin_terms = [_linear(add, mul, [xi]) for xi in args]
-        prod_terms = [[mul, _c(1.0), mul, args[i], args[j]] for i, j in pairs]
-        all_terms = lin_terms + prod_terms
+        all_terms = [_linear(add, mul, [xi]) for xi in args]
+        all_terms.extend([[mul, _c(1.0), mul, args[i], args[j]] for i, j in pairs])
         combined = all_terms[0]
         for term in all_terms[1:]:
             combined = _bin(add, combined, term)
         s(combined, "full_linear_plus_interactions")
 
     stochastic: list[gp.PrimitiveTree] = []
-
     if include_stochastic:
         saved = random.getstate()
         random.seed(rng.randint(0, 2**31))
@@ -266,8 +296,7 @@ def build_seed_individuals(
             for _ in range(n_random_seeds):
                 try:
                     expr = gp.genHalfAndHalf(pset, min_=1, max_=random_max_depth)
-                    ind = creator.SymbolicIndividual(expr)  # type: ignore[attr-defined]
-                    stochastic.append(ind)
+                    stochastic.append(creator.SymbolicIndividual(expr))  # type: ignore[attr-defined]
                 except Exception as exc:
                     logger.debug("Random seed skipped: %s", exc)
         finally:
@@ -280,7 +309,6 @@ def build_seed_individuals(
         ind = _commit(tokens, pset, label)
         if ind is None:
             continue
-
         key = str(ind)
         if key not in seen:
             seen.add(key)
@@ -297,7 +325,6 @@ def build_seed_individuals(
         len(individuals),
         len(stochastic),
     )
-
     return individuals
 
 
@@ -305,13 +332,13 @@ def vectorised_evaluate(func: object, features: np.ndarray) -> np.ndarray:
     try:
         n_cols = features.shape[1]
         columns = [features[:, i] for i in range(n_cols)]
-        result = func(*columns)
+        with np.errstate(all="ignore"):
+            result = func(*columns)
 
         if result is None:
             return _safe_evaluate_rows(func, features)
 
         arr = np.asarray(result, dtype=np.float64)
-
         if arr.shape != (features.shape[0],):
             arr = np.full(features.shape[0], float(arr), dtype=np.float64)
 
@@ -319,7 +346,6 @@ def vectorised_evaluate(func: object, features: np.ndarray) -> np.ndarray:
             return arr
 
         return _safe_evaluate_rows(func, features)
-
     except Exception:
         return _safe_evaluate_rows(func, features)
 
@@ -340,7 +366,8 @@ def _safe_evaluate_rows(func: object, features: np.ndarray) -> np.ndarray:
             break
 
         try:
-            value = func(*row)  # type: ignore[operator]
+            with np.errstate(all="ignore"):
+                value = func(*row)  # type: ignore[operator]
             results[i] = np.nan if value is None else float(value)
         except (TypeError, ValueError, ZeroDivisionError, OverflowError):
             results[i] = np.nan
@@ -361,18 +388,15 @@ def _compile_cached(
     if not runtime.compile_cache_enabled:
         return gp.compile(individual, pset)
 
-    key = str(individual)
+    key = tree_key(individual, runtime)
     func = _COMPILE_CACHE.get(key)
 
     if func is None:
         func = gp.compile(individual, pset)
-
         if len(_COMPILE_CACHE) >= _COMPILE_CACHE_MAX:
-            logger.info("LRU compile cache full, evicting oldest half")
             evict_count = _COMPILE_CACHE_MAX // 2
             for _ in range(evict_count):
                 _COMPILE_CACHE.popitem(last=False)
-
         _COMPILE_CACHE[key] = func
     else:
         _COMPILE_CACHE.move_to_end(key)
@@ -387,7 +411,9 @@ def optimize_constants(
     targets: np.ndarray,
     *,
     timeout: float | None = None,
-) -> None:
+    sample_size: int | None = None,
+    max_constants: int | None = None,
+) -> bool:
     opt_timeout = _CONST_OPT_TIMEOUT if timeout is None else timeout
 
     indices = [
@@ -397,11 +423,23 @@ def optimize_constants(
     ]
 
     if not indices:
-        return
+        return False
+
+    if max_constants is not None and len(indices) > max_constants:
+        return False
+
+    opt_features = features
+    opt_targets = targets
+
+    if sample_size is not None and 0 < sample_size < len(targets):
+        rng = np.random.default_rng(17)
+        sample_idx = rng.choice(len(targets), size=sample_size, replace=False)
+        opt_features = features[sample_idx]
+        opt_targets = targets[sample_idx]
 
     initial = np.array([float(individual[idx].value) for idx in indices], dtype=float)
-    inv_n = 1.0 / len(targets)
-    diff_buf = np.empty(len(targets), dtype=np.float64)
+    inv_n = 1.0 / len(opt_targets)
+    diff_buf = np.empty(len(opt_targets), dtype=np.float64)
 
     def objective(constants: np.ndarray) -> float:
         for idx, value in zip(indices, constants, strict=False):
@@ -409,18 +447,24 @@ def optimize_constants(
 
         try:
             func = gp.compile(individual, pset)
-            preds = vectorised_evaluate(func, features)
+            preds = vectorised_evaluate(func, opt_features)
         except Exception:
             return 1e18
 
         if not np.isfinite(preds).all():
             return 1e18
 
-        np.subtract(preds, targets, out=diff_buf)
+        np.subtract(preds, opt_targets, out=diff_buf)
         return float(np.dot(diff_buf, diff_buf) * inv_n)
 
     initial_fitness = objective(initial)
+
     maxiter = min(50, 10 + 5 * len(indices))
+    if len(opt_targets) > 10_000:
+        maxiter = min(maxiter, 15)
+    elif len(opt_targets) > 2_000:
+        maxiter = min(maxiter, 25)
+
     deadline = time.monotonic() + opt_timeout
 
     def timeout_callback(_intermediate_result) -> None:
@@ -441,12 +485,16 @@ def optimize_constants(
             },
         )
         best = result.x if result.fun < initial_fitness else initial
+        improved = bool(result.fun < initial_fitness)
     except StopIteration:
         logger.debug("optimize_constants interrupted after %.1fs budget", opt_timeout)
-        return
+        return False
 
     for idx, value in zip(indices, best, strict=False):
         individual[idx] = make_constant_terminal(float(value))
+
+    invalidate_individual_caches(individual)
+    return improved
 
 
 def evaluate_individual(
@@ -467,12 +515,10 @@ def evaluate_individual(
             return _PENALTY_FITNESS
 
         error = _compute_metric(preds, targets, _FIT_METRIC)
-
         if not np.isfinite(error):
             return _PENALTY_FITNESS
-
     except Exception as exc:
-        logger.exception("Error evaluating individual: %s", exc)
+        logger.debug("Invalid individual evaluation: %s", exc)
         return _PENALTY_FITNESS
 
     complexity = float(len(individual))
@@ -485,12 +531,10 @@ def migrate(
     rng: np.random.Generator,
 ) -> None:
     n = len(islands)
-
     if n < 2:
         return
 
     emigrants: list[list[gp.PrimitiveTree]] = []
-
     for island in islands:
         best = tools.selBest(island, k=min(migration_size, len(island)))
         emigrants.append([deepcopy(ind) for ind in best])
