@@ -11,26 +11,43 @@ from vfp.modeling.base import VFPModel
 
 logger = logging.getLogger(__name__)
 
+_EARLY_STOPPING_DEFAULT = 100
+
 
 @dataclass(slots=True)
 class XGBoostRegressor(VFPModel):
-    """Simple linear regression using least squares."""
+    """XGBoost-based regression model with optional early stopping."""
 
     _model: XGBRegressor | None = field(default=None, init=False)
     xgb_kwargs: dict[str, Any] = field(default_factory=dict)
     seed: int | None = None
 
-    def get_fit_details(self) -> dict[str, Any]:
-        if self._model is None:
+    @property
+    def _is_fitted(self) -> bool:
+        return self._model is not None
+
+    def _require_fitted(self) -> None:
+        if not self._is_fitted:
             raise ValueError("Model has not been fit yet.")
-        # xgboost provides feature importances
-        importances = self._model.feature_importances_
-        if self.features_name is None:
+
+    def get_fit_details(self) -> dict[str, Any]:
+        self._require_fitted()
+        if not self.features_name:
             return {}
-        return dict(zip(self.features_name, importances))
+        return dict(zip(self.features_name, self._model.feature_importances_))
 
     def __str__(self) -> str:
         return "xgb_regressor"
+
+    def _build_kwargs(self, eval_set: tuple[np.ndarray, np.ndarray] | None) -> dict[str, Any]:
+        kwargs = self.xgb_kwargs.copy()
+        if eval_set is not None:
+            kwargs.setdefault("early_stopping_rounds", _EARLY_STOPPING_DEFAULT)
+        else:
+            kwargs.pop("early_stopping_rounds", None)
+        if self.seed is not None:
+            kwargs.setdefault("random_state", self.seed)
+        return kwargs
 
     def fit(
         self,
@@ -39,55 +56,37 @@ class XGBoostRegressor(VFPModel):
         features_name: tuple[str, ...] | None = None,
         eval_set: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> XGBoostRegressor:
-        self.features_name = (
-            features_name
-            if features_name
-            else tuple(f"ARG{i}" for i in range(features.shape[1]))
+        self.features_name = features_name or tuple(
+            f"ARG{i}" for i in range(features.shape[1])
         )
+
+        kwargs = self._build_kwargs(eval_set)
 
         logger.debug(
             "Fitting XGBoost regression",
             extra={
                 "samples": int(features.shape[0]),
                 "features": int(features.shape[1]),
-                "hyperparameters": self.xgb_kwargs,
+                "hyperparameters": kwargs,
             },
         )
 
-        # Inject early stopping if eval_set is provided
-        kwargs = self.xgb_kwargs.copy()
-        if eval_set is not None and "early_stopping_rounds" not in kwargs:
-            kwargs["early_stopping_rounds"] = 10
-        if self.seed is not None and "random_state" not in kwargs:
-            kwargs["random_state"] = self.seed
-
         self._model = XGBRegressor(**kwargs)
-        if eval_set is not None:
-            self._model.fit(
-                features,
-                targets,
-                eval_set=[eval_set],
-                verbose=0,
-            )
-            if hasattr(self._model, "best_iteration"):
-                logger.debug(
-                    "XGBoost early stopping",
-                    extra={"best_iteration": getattr(self._model, "best_iteration")},
-                )
-        else:
-            self._model.fit(features, targets)
-
-        logger.debug(
-            "Feature Importances", extra={"importances": self.get_fit_details()}
+        self._model.fit(
+            features,
+            targets,
+            eval_set=[eval_set] if eval_set is not None else None,
+            verbose=False,
         )
+
+        if eval_set is not None and hasattr(self._model, "best_iteration"):
+            logger.debug("XGBoost early stopping", extra={"best_iteration": self._model.best_iteration})
+
+        logger.debug("Feature importances", extra={"importances": self.get_fit_details()})
 
         return self
 
     def predict(self, features: np.ndarray) -> np.ndarray:
-        if self._model is None:
-            raise ValueError("Model has not been fit yet.")
-        logger.info(
-            "Predicting with XGB regression",
-            extra={"samples": int(features.shape[0])},
-        )
+        self._require_fitted()
+        logger.info("Predicting with XGBoost regression", extra={"samples": int(features.shape[0])})
         return self._model.predict(features)

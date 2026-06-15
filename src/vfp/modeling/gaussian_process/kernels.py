@@ -25,7 +25,7 @@ class RBFKernel:
         if Y is None:
             Y = X
         dists_sq = cdist(X, Y, metric="sqeuclidean")
-        return self.signal_variance * np.exp(-0.5 * dists_sq / (self.length_scale**2))
+        return self.signal_variance * np.exp(-0.5 * dists_sq / (self.length_scale ** 2))
 
     def get_hyperparameters(self) -> np.ndarray:
         return np.log(np.array([self.signal_variance, self.length_scale]))
@@ -102,7 +102,7 @@ class Matern52Kernel:
         r = dists / self.length_scale
         sqrt5_r = np.sqrt(5.0) * r
         return (
-            self.signal_variance * (1.0 + sqrt5_r + 5.0 / 3.0 * r**2) * np.exp(-sqrt5_r)
+                self.signal_variance * (1.0 + sqrt5_r + 5.0 / 3.0 * r ** 2) * np.exp(-sqrt5_r)
         )
 
     def get_hyperparameters(self) -> np.ndarray:
@@ -117,13 +117,81 @@ class Matern52Kernel:
         return 2
 
 
-type Kernel = RBFKernel | ARDKernel | Matern52Kernel
+@dataclass(slots=True)
+class PolynomialKernel:
+    """Polynomial kernel.
+
+    k(x, x') = (x·x' + coef0)^degree
+
+    Hyperparameters (log-space): [log(signal_variance), log(coef0)]
+    degree is treated as a fixed integer (not optimized).
+    """
+
+    signal_variance: float = 1.0
+    coef0: float = 1.0
+    degree: int = 3
+
+    def __call__(self, X: np.ndarray, Y: np.ndarray | None = None) -> np.ndarray:
+        if Y is None:
+            Y = X
+        return self.signal_variance * (X @ Y.T + self.coef0) ** self.degree
+
+    def get_hyperparameters(self) -> np.ndarray:
+        return np.log(np.array([self.signal_variance, self.coef0]))
+
+    def set_hyperparameters(self, theta: np.ndarray) -> None:
+        self.signal_variance = float(np.exp(theta[0]))
+        self.coef0 = float(np.exp(theta[1]))
+
+    @property
+    def n_hyperparameters(self) -> int:
+        return 2
 
 
-def build_kernel(name: str, n_features: int) -> Kernel:
+@dataclass(slots=True)
+class RationalQuadraticKernel:
+    """Rational Quadratic kernel.
+
+    k(x, x') = signal_variance * (1 + ||x - x'||^2 / (2 * alpha * length_scale^2))^(-alpha)
+
+    Equivalent to an infinite mixture of RBF kernels with different length scales.
+    Recovers RBF as alpha -> infinity.
+
+    Hyperparameters (log-space): [log(signal_variance), log(length_scale), log(alpha)]
+    """
+
+    signal_variance: float = 1.0
+    length_scale: float = 1.0
+    alpha: float = 1.0
+
+    def __call__(self, X: np.ndarray, Y: np.ndarray | None = None) -> np.ndarray:
+        if Y is None:
+            Y = X
+        dists_sq = cdist(X, Y, metric="sqeuclidean")
+        return self.signal_variance * (
+                1.0 + dists_sq / (2.0 * self.alpha * self.length_scale ** 2)
+        ) ** (-self.alpha)
+
+    def get_hyperparameters(self) -> np.ndarray:
+        return np.log(np.array([self.signal_variance, self.length_scale, self.alpha]))
+
+    def set_hyperparameters(self, theta: np.ndarray) -> None:
+        self.signal_variance = float(np.exp(theta[0]))
+        self.length_scale = float(np.exp(theta[1]))
+        self.alpha = float(np.exp(theta[2]))
+
+    @property
+    def n_hyperparameters(self) -> int:
+        return 3
+
+
+type Kernel = RBFKernel | ARDKernel | Matern52Kernel | PolynomialKernel | RationalQuadraticKernel
+
+
+def build_kernel(name: str, n_features: int, *, degree: int) -> Kernel:
     """Build a kernel by name.
 
-    Supported names: 'rbf', 'ard', 'matern52'.
+    Supported names: 'rbf', 'ard', 'matern52', 'polynomial', 'rational_quadratic'.
     """
     if name == "rbf":
         return RBFKernel()
@@ -133,4 +201,11 @@ def build_kernel(name: str, n_features: int) -> Kernel:
         return k
     if name == "matern52":
         return Matern52Kernel()
-    raise ValueError(f"Unknown kernel: {name!r}. Choose from 'rbf', 'ard', 'matern52'.")
+    if name == "polynomial":
+        return PolynomialKernel(degree=degree)
+    if name == "rational_quadratic":
+        return RationalQuadraticKernel()
+    raise ValueError(
+        f"Unknown kernel: {name!r}. "
+        "Choose from 'rbf', 'ard', 'matern52', 'polynomial', 'rational_quadratic'."
+    )

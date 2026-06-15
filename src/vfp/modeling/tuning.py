@@ -8,6 +8,7 @@ import optuna
 from sklearn.model_selection import KFold
 
 from vfp.modeling.base import VFPModel
+from vfp.modeling.gaussian_process import GaussianProcessRegressor
 from vfp.modeling.sklearn_regressors.bayesian_ridge_regressor import (
     BayesianRidgeRegressor,
 )
@@ -38,6 +39,7 @@ def tune_hyperparameters(
             ElasticNetRegressor,
             BayesianRidgeRegressor,
             HuberRegressor,
+            GaussianProcessRegressor,
         ),
     ):
         logger.warning(
@@ -68,20 +70,26 @@ def tune_hyperparameters(
 
             if isinstance(trial_model, XGBoostRegressor):
                 kwargs = {
-                    "max_depth": trial.suggest_int("max_depth", 1, 5),
-                    "subsample": trial.suggest_float("subsample", 0.5, 0.8),
-                    "colsample_bytree": trial.suggest_float(
-                        "colsample_bytree", 0.5, 0.8
-                    ),
-                    "reg_alpha": trial.suggest_float("reg_alpha", 1e-2, 10.0, log=True),
-                    "reg_lambda": trial.suggest_float(
-                        "reg_lambda", 1e-2, 10.0, log=True
-                    ),
-                    "learning_rate": trial.suggest_categorical(
-                        "learning_rate", [0.01, 0.05]
-                    ),
-                    "n_estimators": trial.suggest_int("n_estimators", 100, 500),
-                    "early_stopping_rounds": 10,
+                    # Tree structure
+                    "max_depth": trial.suggest_int("max_depth", 3, 10),
+                    "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
+                    "gamma": trial.suggest_float("gamma", 0.0, 5.0),
+
+                    # Sampling
+                    "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+                    "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
+                    "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.5, 1.0),
+
+                    # Regularization
+                    "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
+                    "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
+
+                    # Boosting
+                    "learning_rate": trial.suggest_float("learning_rate", 1e-3, 0.3, log=True),
+                    "n_estimators": trial.suggest_int("n_estimators", 100, 1000, step=50),
+
+                    # Early stopping handled by fit()
+                    "early_stopping_rounds": 100,
                 }
                 trial_model.xgb_kwargs.update(kwargs)
             elif isinstance(trial_model, SymbolicRegressor):
@@ -123,6 +131,18 @@ def tune_hyperparameters(
             elif isinstance(trial_model, HuberRegressor):
                 trial_model.epsilon = trial.suggest_float("epsilon", 1.01, 1000)
                 trial_model.alpha = trial.suggest_float("alpha", 1e-4, 10, log=True)
+            elif isinstance(trial_model, GaussianProcessRegressor):
+                trial_model.kernel_name = trial.suggest_categorical(
+                    "kernel_name", ['rbf', 'ard', 'matern52', 'polynomial', 'rational_quadratic']
+                )
+                trial_model.noise_variance = trial.suggest_float(
+                    "noise_variance", 1e-6, 10, log=True
+                )
+                if trial_model.kernel_name == 'polynomial':
+                    trial_model.degree = trial.suggest_int("degree", 1, 4)
+
+
+
 
             trial_model.fit(
                 X_train, y_train, features_name=features_name, eval_set=(X_val, y_val)
@@ -157,7 +177,7 @@ def tune_hyperparameters(
 
     if isinstance(best_model, XGBoostRegressor):
         best_model.xgb_kwargs.update(best_params)
-        best_model.xgb_kwargs["early_stopping_rounds"] = 10
+        best_model.xgb_kwargs["early_stopping_rounds"] = 100
     elif isinstance(best_model, SymbolicRegressor):
         best_model.mutation_rate = best_params["mutation_rate"]
         best_model.crossover_rate = best_params["crossover_rate"]
@@ -177,5 +197,10 @@ def tune_hyperparameters(
     elif isinstance(best_model, HuberRegressor):
         best_model.epsilon = best_params["epsilon"]
         best_model.alpha = best_params["alpha"]
+    elif isinstance(best_model, GaussianProcessRegressor):
+        best_model.kernel_name = best_params["kernel_name"]
+        best_model.noise_variance = best_params["noise_variance"]
+        if best_model.kernel_name == 'polynomial':
+            best_model.degree = best_params["degree"]
 
     return best_model
