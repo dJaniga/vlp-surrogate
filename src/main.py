@@ -48,6 +48,8 @@ def build_parser() -> argparse.ArgumentParser:
             "elasticnet",
             "bayesian_ridge",
             "huber",
+            "svr",
+            "mlp",
         ],
         default="linear",
     )
@@ -158,6 +160,10 @@ def main():
             model = create_model("bayesian_ridge", seed=parsed_args.seed)
         elif parsed_args.model == "huber":
             model = create_model("huber", seed=parsed_args.seed)
+        elif parsed_args.model == "svr":
+            model = create_model("svr", seed=parsed_args.seed)
+        elif parsed_args.model == "mlp":
+            model = create_model("mlp", seed=parsed_args.seed)
         else:
             raise ValueError(f"Unsupported model: {parsed_args.model}")
 

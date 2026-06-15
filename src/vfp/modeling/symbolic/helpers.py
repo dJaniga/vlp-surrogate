@@ -210,7 +210,10 @@ def build_seed_individuals(
         if square is not None:
             s([square, xi], f"square_{i}")
             s(_bin(add, [square, xi], [xi]), f"square_plus_linear_{i}")
-            s(_bin(add, [mul, _c(1.0), square, xi], [mul, _c(1.0), xi]), f"scaled_square_linear_{i}")
+            s(
+                _bin(add, [mul, _c(1.0), square, xi], [mul, _c(1.0), xi]),
+                f"scaled_square_linear_{i}",
+            )
         if abs_p is not None:
             s([abs_p, xi], f"abs_{i}")
         if neg is not None:
@@ -233,7 +236,10 @@ def build_seed_individuals(
         s(_bin(mul, [xi], [xj]), f"product_{i}_{j}")
         s([mul, _c(1.0), mul, xi, xj], f"scaled_product_{i}_{j}")
         s(_bin(div, [xi], [xj]), f"ratio_{i}_{j}")
-        s(_bin(div, _bin(sub, [xi], [xj]), _bin(add, [xi], [xj])), f"signed_norm_diff_{i}_{j}")
+        s(
+            _bin(div, _bin(sub, [xi], [xj]), _bin(add, [xi], [xj])),
+            f"signed_norm_diff_{i}_{j}",
+        )
 
         if abs_p is not None:
             s([abs_p, sub, xi, xj], f"abs_diff_{i}_{j}")
@@ -242,7 +248,10 @@ def build_seed_individuals(
             s(_bin(add, [abs_p, xi], [abs_p, xj]), f"l1_sum_{i}_{j}")
             s(_bin(sub, [abs_p, xi], [abs_p, xj]), f"l1_diff_{i}_{j}")
             s(_bin(mul, [abs_p, xi], [abs_p, xj]), f"l1_product_{i}_{j}")
-            s(_bin(div, [abs_p, xi], _bin(add, [abs_p, xj], [_c(1e-6)])), f"smooth_ratio_{i}_{j}")
+            s(
+                _bin(div, [abs_p, xi], _bin(add, [abs_p, xj], [_c(1e-6)])),
+                f"smooth_ratio_{i}_{j}",
+            )
 
         if square is not None:
             s(_bin(sub, [square, xi], [square, xj]), f"diff_squares_{i}_{j}")
@@ -262,7 +271,10 @@ def build_seed_individuals(
 
     for i, j in pairs:
         xi, xj = args[i], args[j]
-        s(_bin(add, _linear(add, mul, [xi, xj]), [mul, _c(1.0), mul, xi, xj]), f"linear_interaction_{i}_{j}")
+        s(
+            _bin(add, _linear(add, mul, [xi, xj]), [mul, _c(1.0), mul, xi, xj]),
+            f"linear_interaction_{i}_{j}",
+        )
 
     if square is not None:
         for i, j in pairs:
@@ -278,7 +290,10 @@ def build_seed_individuals(
 
     if n_features >= 3:
         for skip in range(n_features):
-            s(_linear(add, mul, [args[k] for k in range(n_features) if k != skip]), f"leave_out_{skip}")
+            s(
+                _linear(add, mul, [args[k] for k in range(n_features) if k != skip]),
+                f"leave_out_{skip}",
+            )
 
     if 2 <= n_features <= 6:
         all_terms = [_linear(add, mul, [xi]) for xi in args]
@@ -369,7 +384,7 @@ def _safe_evaluate_rows(func: object, features: np.ndarray) -> np.ndarray:
             with np.errstate(all="ignore"):
                 value = func(*row)  # type: ignore[operator]
             results[i] = np.nan if value is None else float(value)
-        except (TypeError, ValueError, ZeroDivisionError, OverflowError):
+        except TypeError, ValueError, ZeroDivisionError, OverflowError:
             results[i] = np.nan
 
     return results

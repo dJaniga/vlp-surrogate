@@ -13,6 +13,8 @@ from vfp.modeling.sklearn_regressors.bayesian_ridge_regressor import (
     BayesianRidgeRegressor,
 )
 from vfp.modeling.sklearn_regressors.elastic_net_regressor import ElasticNetRegressor
+from vfp.modeling.sklearn_regressors.mlp_regressor import MLPRegressor
+from vfp.modeling.sklearn_regressors.svr_regressor import SVRRegressor
 from vfp.modeling.sklearn_regressors.xgboost_regressor import XGBoostRegressor
 from vfp.modeling.symbolic.symbolic_regressor import SymbolicRegressor
 from vfp.modeling.sklearn_regressors.huber_regressor import HuberRegressor
@@ -40,6 +42,8 @@ def tune_hyperparameters(
             BayesianRidgeRegressor,
             HuberRegressor,
             GaussianProcessRegressor,
+            SVRRegressor,
+            MLPRegressor,
         ),
     ):
         logger.warning(
@@ -74,20 +78,26 @@ def tune_hyperparameters(
                     "max_depth": trial.suggest_int("max_depth", 3, 10),
                     "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
                     "gamma": trial.suggest_float("gamma", 0.0, 5.0),
-
                     # Sampling
                     "subsample": trial.suggest_float("subsample", 0.5, 1.0),
-                    "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
-                    "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.5, 1.0),
-
+                    "colsample_bytree": trial.suggest_float(
+                        "colsample_bytree", 0.5, 1.0
+                    ),
+                    "colsample_bylevel": trial.suggest_float(
+                        "colsample_bylevel", 0.5, 1.0
+                    ),
                     # Regularization
                     "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
-                    "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
-
+                    "reg_lambda": trial.suggest_float(
+                        "reg_lambda", 1e-8, 10.0, log=True
+                    ),
                     # Boosting
-                    "learning_rate": trial.suggest_float("learning_rate", 1e-3, 0.3, log=True),
-                    "n_estimators": trial.suggest_int("n_estimators", 100, 1000, step=50),
-
+                    "learning_rate": trial.suggest_float(
+                        "learning_rate", 1e-3, 1, log=True
+                    ),
+                    "n_estimators": trial.suggest_int(
+                        "n_estimators", 100, 1000, step=50
+                    ),
                     # Early stopping handled by fit()
                     "early_stopping_rounds": 100,
                 }
@@ -133,16 +143,45 @@ def tune_hyperparameters(
                 trial_model.alpha = trial.suggest_float("alpha", 1e-4, 10, log=True)
             elif isinstance(trial_model, GaussianProcessRegressor):
                 trial_model.kernel_name = trial.suggest_categorical(
-                    "kernel_name", ['rbf', 'ard', 'matern52', 'polynomial', 'rational_quadratic']
+                    "kernel_name",
+                    ["rbf", "ard", "matern52", "polynomial", "rational_quadratic"],
                 )
                 trial_model.noise_variance = trial.suggest_float(
                     "noise_variance", 1e-6, 10, log=True
                 )
-                if trial_model.kernel_name == 'polynomial':
+                if trial_model.kernel_name == "polynomial":
                     trial_model.degree = trial.suggest_int("degree", 1, 4)
 
-
-
+            elif isinstance(trial_model, SVRRegressor):
+                trial_model.C = trial.suggest_float("C", 1e-6, 10, log=True)
+                trial_model.epsilon = trial.suggest_float("epsilon", 1e-6, 10, log=True)
+                trial_model.kernel = trial.suggest_categorical(
+                    "kernel", ["linear", "poly", "rbf", "sigmoid"]
+                )
+                trial_model.degree = trial.suggest_int("degree", 1, 5)
+            elif isinstance(trial_model, MLPRegressor):
+                n_layers = trial.suggest_int("n_layers", 1, 3)
+                hidden_layer_sizes = tuple(
+                    trial.suggest_int(f"n_units_l{i}", 32, 256, step=32)
+                    for i in range(n_layers)
+                )
+                trial_model.hidden_layer_sizes = hidden_layer_sizes
+                trial_model.activation = trial.suggest_categorical(
+                    "activation", ["relu", "tanh", "logistic"]
+                )
+                trial_model.alpha = trial.suggest_float("alpha", 1e-5, 1e-1, log=True)
+                trial_model.learning_rate = trial.suggest_categorical(
+                    "learning_rate", ["constant", "invscaling", "adaptive"]
+                )
+                trial_model.learning_rate_init = trial.suggest_float(
+                    "learning_rate_init", 1e-4, 1e-1, log=True
+                )
+                trial_model.beta_1 = trial.suggest_float("beta_1", 0.85, 0.99)
+                trial_model.beta_2 = trial.suggest_float("beta_2", 0.99, 0.9999)
+                trial_model.max_iter = trial.suggest_int("max_iter", 100, 500, step=100)
+                trial_model.n_iter_no_change = trial.suggest_int(
+                    "n_iter_no_change", 5, 20
+                )
 
             trial_model.fit(
                 X_train, y_train, features_name=features_name, eval_set=(X_val, y_val)
@@ -200,7 +239,24 @@ def tune_hyperparameters(
     elif isinstance(best_model, GaussianProcessRegressor):
         best_model.kernel_name = best_params["kernel_name"]
         best_model.noise_variance = best_params["noise_variance"]
-        if best_model.kernel_name == 'polynomial':
+        if best_model.kernel_name == "polynomial":
             best_model.degree = best_params["degree"]
+    elif isinstance(best_model, SVRRegressor):
+        best_model.C = best_params["C"]
+        best_model.epsilon = best_params["epsilon"]
+        best_model.kernel = best_params["kernel"]
+        best_model.degree = best_params["degree"]
+    elif isinstance(best_model, MLPRegressor):
+        best_model.hidden_layer_sizes = tuple(
+            best_params[f"n_units_l{i}"] for i in range(best_params["n_layers"])
+        )
+        best_model.activation = best_params["activation"]
+        best_model.alpha = best_params["alpha"]
+        best_model.learning_rate = best_params["learning_rate"]
+        best_model.learning_rate_init = best_params["learning_rate_init"]
+        best_model.beta_1 = best_params["beta_1"]
+        best_model.beta_2 = best_params["beta_2"]
+        best_model.max_iter = best_params["max_iter"]
+        best_model.n_iter_no_change = best_params["n_iter_no_change"]
 
     return best_model

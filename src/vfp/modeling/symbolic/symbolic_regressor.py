@@ -55,7 +55,9 @@ def clear_symbolic_regressor_caches() -> None:
     clear_simplification_caches()
 
 
-def _fitness_cache_get(key: tuple, runtime: RuntimeOptions) -> tuple[float, float] | None:
+def _fitness_cache_get(
+    key: tuple, runtime: RuntimeOptions
+) -> tuple[float, float] | None:
     if not runtime.fitness_cache_enabled:
         return None
 
@@ -66,7 +68,9 @@ def _fitness_cache_get(key: tuple, runtime: RuntimeOptions) -> tuple[float, floa
     return val
 
 
-def _fitness_cache_put(key: tuple, val: tuple[float, float], runtime: RuntimeOptions) -> None:
+def _fitness_cache_put(
+    key: tuple, val: tuple[float, float], runtime: RuntimeOptions
+) -> None:
     if not runtime.fitness_cache_enabled:
         return
 
@@ -237,7 +241,9 @@ def _population_diversity_metrics(
         "max_tree_size": float(np.max(sizes)),
         "avg_height": float(np.mean(heights)),
         "std_height": float(np.std(heights)),
-        "fitness_diversity": float(np.std(valid_fitness)) if valid_fitness.size else 0.0,
+        "fitness_diversity": float(np.std(valid_fitness))
+        if valid_fitness.size
+        else 0.0,
         "island_diversity_mean": (
             float(np.mean(island_diversity_arr)) if island_diversity_arr.size else 0.0
         ),
@@ -290,6 +296,7 @@ def _evaluate_unique(
 
     return {ind_id: key_to_fit[key] for ind_id, key in id_to_key.items()}
 
+
 def _deduplicate_island_structures(
     island: list[gp.PrimitiveTree],
     toolbox: base.Toolbox,
@@ -306,9 +313,11 @@ def _deduplicate_island_structures(
 
     for ind in sorted(
         island,
-        key=lambda candidate: candidate.fitness.values[0]  # type: ignore[attr-defined]
-        if candidate.fitness.valid  # type: ignore[attr-defined]
-        else float("inf"),
+        key=lambda candidate: (
+            candidate.fitness.values[0]  # type: ignore[attr-defined]
+            if candidate.fitness.valid  # type: ignore[attr-defined]
+            else float("inf")
+        ),
     ):
         key = tree_key(ind, runtime)
         if key in seen:
@@ -338,6 +347,7 @@ def _deduplicate_island_structures(
 
     return unique
 
+
 def _replace_worst_with_random_unique(
     island: list[gp.PrimitiveTree],
     toolbox: base.Toolbox,
@@ -350,9 +360,11 @@ def _replace_worst_with_random_unique(
     replace_count = min(replace_count, len(island))
     survivors = sorted(
         island,
-        key=lambda candidate: candidate.fitness.values[0]  # type: ignore[attr-defined]
-        if candidate.fitness.valid  # type: ignore[attr-defined]
-        else float("inf"),
+        key=lambda candidate: (
+            candidate.fitness.values[0]  # type: ignore[attr-defined]
+            if candidate.fitness.valid  # type: ignore[attr-defined]
+            else float("inf")
+        ),
     )[: len(island) - replace_count]
 
     seen = {tree_key(ind, runtime) for ind in survivors}
@@ -376,7 +388,6 @@ def _replace_worst_with_random_unique(
         replacements.append(candidate)
 
     return survivors + replacements
-
 
 
 def _evolve_island_worker(args: tuple) -> tuple[list[gp.PrimitiveTree], dict]:
@@ -597,7 +608,9 @@ class SymbolicRegressor(VFPModel):
             "cache_mode": self.cache_mode,
             "execution_mode": self.execution_mode,
             "profile": dict(self.profile_),
-            "last_diversity": self.diversity_history_[-1] if self.diversity_history_ else None,
+            "last_diversity": self.diversity_history_[-1]
+            if self.diversity_history_
+            else None,
         }
 
     def _validate_config(self) -> None:
@@ -628,7 +641,9 @@ class SymbolicRegressor(VFPModel):
         if self.cache_mode not in {"off", "safe", "all"}:
             raise ValueError("cache_mode must be one of: off, safe, all.")
         if self.execution_mode not in {"auto", "sequential", "threaded"}:
-            raise ValueError("execution_mode must be one of: auto, sequential, threaded.")
+            raise ValueError(
+                "execution_mode must be one of: auto, sequential, threaded."
+            )
         if not 0 < self.full_eval_after_ratio <= 1:
             raise ValueError("full_eval_after_ratio must be in (0, 1].")
         if not 0 < self.early_eval_sample_ratio <= 1:
@@ -641,7 +656,6 @@ class SymbolicRegressor(VFPModel):
             raise ValueError("diversity_rescue_fraction must be in [0, 1].")
         if self.diversity_rescue_interval <= 0:
             raise ValueError("diversity_rescue_interval must be positive.")
-
 
     def _log_population_diversity(
         self,
@@ -788,13 +802,13 @@ class SymbolicRegressor(VFPModel):
             ind.fitness.values = fits[id(ind)]
 
     def _deduplicate_and_evaluate_island(
-            self,
-            island: list[gp.PrimitiveTree],
-            island_size: int,
-            features: np.ndarray,
-            targets: np.ndarray,
-            runtime: RuntimeOptions,
-            run_id: str,
+        self,
+        island: list[gp.PrimitiveTree],
+        island_size: int,
+        features: np.ndarray,
+        targets: np.ndarray,
+        runtime: RuntimeOptions,
+        run_id: str,
     ) -> list[gp.PrimitiveTree]:
         if not self.enforce_unique_structures:
             return island
@@ -830,7 +844,10 @@ class SymbolicRegressor(VFPModel):
         if diversity_metrics is None:
             diversity_metrics = _population_diversity_metrics(islands, runtime)
 
-        if diversity_metrics["duplicate_ratio"] < self.diversity_rescue_duplicate_threshold:
+        if (
+            diversity_metrics["duplicate_ratio"]
+            < self.diversity_rescue_duplicate_threshold
+        ):
             return islands
 
         assert self._toolbox is not None
@@ -854,7 +871,9 @@ class SymbolicRegressor(VFPModel):
                     island_size,
                     runtime,
                 )
-                self._evaluate_invalid_batch(new_island, features, targets, runtime, run_id)
+                self._evaluate_invalid_batch(
+                    new_island, features, targets, runtime, run_id
+                )
 
             rescued.append(tools.selNSGA2(new_island, len(new_island)))
 
@@ -870,8 +889,6 @@ class SymbolicRegressor(VFPModel):
             )
 
         return rescued
-
-
 
     def _run_const_opt(
         self,
@@ -955,7 +972,9 @@ class SymbolicRegressor(VFPModel):
             except Exception:
                 logger.debug("Error mutating individual", exc_info=True)
 
-        self._evaluate_invalid_batch(offspring, features_scaled, targets_scaled, runtime, run_id)
+        self._evaluate_invalid_batch(
+            offspring, features_scaled, targets_scaled, runtime, run_id
+        )
 
         if self.nsga_interval <= 1 or generation % self.nsga_interval == 0:
             survivors = tools.selNSGA2(island + offspring, island_size)
@@ -1009,7 +1028,9 @@ class SymbolicRegressor(VFPModel):
             random.seed(self.seed)
 
         try:
-            return self._fit_impl(features, targets, features_name, eval_set, runtime, run_id)
+            return self._fit_impl(
+                features, targets, features_name, eval_set, runtime, run_id
+            )
         finally:
             random.setstate(saved_random_state)
             _fitness_cache.clear()
@@ -1056,7 +1077,9 @@ class SymbolicRegressor(VFPModel):
                 self._scale_targets(targets, fit=True),
                 dtype=np.float64,
             )
-            self._last_features_id = features_id if runtime.static_cache_enabled else None
+            self._last_features_id = (
+                features_id if runtime.static_cache_enabled else None
+            )
 
         self._time_add("scale", time.monotonic() - scale_start)
 
@@ -1168,7 +1191,9 @@ class SymbolicRegressor(VFPModel):
 
         executor: ThreadPoolExecutor | None = None
         if use_parallel_islands:
-            self._executor = self._executor or ThreadPoolExecutor(max_workers=self.n_islands)
+            self._executor = self._executor or ThreadPoolExecutor(
+                max_workers=self.n_islands
+            )
             executor = self._executor
 
         fit_deadline = time.monotonic() + self.max_eval_time_seconds
@@ -1227,8 +1252,7 @@ class SymbolicRegressor(VFPModel):
                 ]
 
                 futures: list[Future] = [
-                    executor.submit(_evolve_island_worker, args)
-                    for args in worker_args
+                    executor.submit(_evolve_island_worker, args) for args in worker_args
                 ]
                 done, not_done = wait(
                     futures,
@@ -1317,7 +1341,9 @@ class SymbolicRegressor(VFPModel):
                         key=lambda ind: ind.fitness.values[0],  # type: ignore[attr-defined]
                     )[: min(self.simplify_top_k, len(island))]
                     candidates = [
-                        ind for ind in candidates if len(ind) >= self.simplify_min_tree_size
+                        ind
+                        for ind in candidates
+                        if len(ind) >= self.simplify_min_tree_size
                     ]
                     simplify_island(
                         candidates,
@@ -1377,8 +1403,12 @@ class SymbolicRegressor(VFPModel):
                     "Population diversity after rescue",
                     extra={
                         "generation": generation,
-                        "structural_diversity": post_rescue_metrics["structural_diversity"],
-                        "unique_structures": int(post_rescue_metrics["unique_structures"]),
+                        "structural_diversity": post_rescue_metrics[
+                            "structural_diversity"
+                        ],
+                        "unique_structures": int(
+                            post_rescue_metrics["unique_structures"]
+                        ),
                         "population_size": int(post_rescue_metrics["population_size"]),
                         "duplicate_ratio": post_rescue_metrics["duplicate_ratio"],
                     },

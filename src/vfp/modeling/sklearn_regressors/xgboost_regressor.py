@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -12,6 +13,7 @@ from vfp.modeling.base import VFPModel
 logger = logging.getLogger(__name__)
 
 _EARLY_STOPPING_DEFAULT = 100
+_FIT_METRIC: str = os.environ.get("VLP_FIT_METRIC", "mse")
 
 
 @dataclass(slots=True)
@@ -39,7 +41,9 @@ class XGBoostRegressor(VFPModel):
     def __str__(self) -> str:
         return "xgb_regressor"
 
-    def _build_kwargs(self, eval_set: tuple[np.ndarray, np.ndarray] | None) -> dict[str, Any]:
+    def _build_kwargs(
+        self, eval_set: tuple[np.ndarray, np.ndarray] | None
+    ) -> dict[str, Any]:
         kwargs = self.xgb_kwargs.copy()
         if eval_set is not None:
             kwargs.setdefault("early_stopping_rounds", _EARLY_STOPPING_DEFAULT)
@@ -80,13 +84,21 @@ class XGBoostRegressor(VFPModel):
         )
 
         if eval_set is not None and hasattr(self._model, "best_iteration"):
-            logger.debug("XGBoost early stopping", extra={"best_iteration": self._model.best_iteration})
+            logger.debug(
+                "XGBoost early stopping",
+                extra={"best_iteration": self._model.best_iteration},
+            )
 
-        logger.debug("Feature importances", extra={"importances": self.get_fit_details()})
+        logger.debug(
+            "Feature importances", extra={"importances": self.get_fit_details()}
+        )
 
         return self
 
     def predict(self, features: np.ndarray) -> np.ndarray:
         self._require_fitted()
-        logger.info("Predicting with XGBoost regression", extra={"samples": int(features.shape[0])})
+        logger.info(
+            "Predicting with XGBoost regression",
+            extra={"samples": int(features.shape[0])},
+        )
         return self._model.predict(features)

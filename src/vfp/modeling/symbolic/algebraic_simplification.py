@@ -8,7 +8,11 @@ import numpy as np
 import sympy
 from deap import creator, gp
 
-from .helpers import evaluate_individual, invalidate_individual_caches, make_constant_terminal
+from .helpers import (
+    evaluate_individual,
+    invalidate_individual_caches,
+    make_constant_terminal,
+)
 from .runtime_options import DEFAULT_RUNTIME_OPTIONS, RuntimeOptions
 
 logger = logging.getLogger(__name__)
@@ -126,12 +130,12 @@ def _deap_to_sympy(
             if name.startswith("ARG"):
                 try:
                     stack.append(symbols[int(name[3:])])
-                except (ValueError, IndexError):
+                except ValueError, IndexError:
                     return None
             else:
                 try:
                     stack.append(sympy.Float(float(node.value)))
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     return None
         elif isinstance(node, gp.Primitive):
             fn = op_map.get(node.name)
@@ -353,7 +357,9 @@ def _simplify_individual(
             if new_tokens is None:
                 return False
         else:
-            new_tokens = _compute_simplified_tokens(individual, pset, n_features, runtime)
+            new_tokens = _compute_simplified_tokens(
+                individual, pset, n_features, runtime
+            )
             if len(_RESULT_CACHE) < _RESULT_CACHE_MAX:
                 _RESULT_CACHE[key] = new_tokens
             if new_tokens is None:
