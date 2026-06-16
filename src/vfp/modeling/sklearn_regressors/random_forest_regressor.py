@@ -29,6 +29,7 @@ class RandomForestRegressor(VFPModel):
             min_weight_fraction_leaf=self.min_weight_fraction_leaf,
             max_features=self.max_features,
             random_state=self.seed,
+            n_jobs=-1,
         )
 
         self._model.fit(features, targets)

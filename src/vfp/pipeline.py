@@ -72,7 +72,7 @@ def vfp_pipeline(
     optimize_hyperparameters: bool = True,
     tuning_metric: str = "mean_squared_error",
     seed: int | None = None,
-    max_seed_retries: int = 10,
+    max_seed_retries: int = 5,
 ) -> VFPTable | None:
 
     fit_results_export_path = output_file_path.with_suffix("")

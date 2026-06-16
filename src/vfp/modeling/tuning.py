@@ -185,7 +185,7 @@ def tune_hyperparameters(
                     "n_iter_no_change", 5, 20
                 )
             elif isinstance(trial_model, RandomForestRegressor):
-                trial_model.n_estimators = trial.suggest_int("n_estimators", 10, 1000, step=10)
+                trial_model.n_estimators = trial.suggest_int("n_estimators", 10, 10000)
                 trial_model.max_depth = trial.suggest_int("max_depth", 1, 100)
                 trial_model.min_samples_split = trial.suggest_int("min_samples_split", 2, 10)
                 trial_model.min_samples_leaf = trial.suggest_int("min_samples_leaf", 1, 10)
