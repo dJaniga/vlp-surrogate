@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve, solve_triangular
 
+from vfp.modeling import VFPModel
 from vfp.modeling.gaussian_process.kernels import KernelType, build_kernel
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
 
 
 @dataclass(slots=True)
-class GaussianProcessRegressor:
+class GaussianProcessRegressor(VFPModel):
     """GP regressor with analytic-gradient hyperparameter optimization.
 
     Parameters

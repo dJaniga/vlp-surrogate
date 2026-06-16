@@ -18,6 +18,7 @@ from vfp.modeling.sklearn_regressors import (
     HuberRegressor,
 )
 from vfp.modeling.sklearn_regressors.mlp_regressor import MLPRegressor
+from vfp.modeling.sklearn_regressors.random_forest_regressor import RandomForestRegressor
 from vfp.modeling.sklearn_regressors.svr_regressor import SVRRegressor
 from vfp.modeling.symbolic import SymbolicRegressor
 
@@ -35,6 +36,7 @@ ModelName = Literal[
     "huber",
     "svr",
     "mlp",
+    "rfr"
 ]
 
 
@@ -63,6 +65,8 @@ def create_model(name: ModelName, **kwargs) -> VFPModel:
         return SVRRegressor(**kwargs)
     if name == "mlp":
         return MLPRegressor(**kwargs)
+    if name == "rfr":
+        return RandomForestRegressor(**kwargs)
     raise ValueError(f"Unsupported model name: {name}")
 
 

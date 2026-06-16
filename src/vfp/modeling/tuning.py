@@ -14,6 +14,7 @@ from vfp.modeling.sklearn_regressors.bayesian_ridge_regressor import (
 )
 from vfp.modeling.sklearn_regressors.elastic_net_regressor import ElasticNetRegressor
 from vfp.modeling.sklearn_regressors.mlp_regressor import MLPRegressor
+from vfp.modeling.sklearn_regressors.random_forest_regressor import RandomForestRegressor
 from vfp.modeling.sklearn_regressors.svr_regressor import SVRRegressor
 from vfp.modeling.sklearn_regressors.xgboost_regressor import XGBoostRegressor
 from vfp.modeling.symbolic.symbolic_regressor import SymbolicRegressor
@@ -44,6 +45,7 @@ def tune_hyperparameters(
             GaussianProcessRegressor,
             SVRRegressor,
             MLPRegressor,
+            RandomForestRegressor
         ),
     ):
         logger.warning(
@@ -182,6 +184,14 @@ def tune_hyperparameters(
                 trial_model.n_iter_no_change = trial.suggest_int(
                     "n_iter_no_change", 5, 20
                 )
+            elif isinstance(trial_model, RandomForestRegressor):
+                trial_model.n_estimators = trial.suggest_int("n_estimators", 10, 1000, step=10)
+                trial_model.max_depth = trial.suggest_int("max_depth", 1, 100)
+                trial_model.min_samples_split = trial.suggest_int("min_samples_split", 2, 10)
+                trial_model.min_samples_leaf = trial.suggest_int("min_samples_leaf", 1, 10)
+                trial_model.max_features = trial.suggest_float("max_features",0.01, 1)
+                trial_model.min_weight_fraction_leaf = trial.suggest_float("min_weight_fraction_leaf",0.001, 0.499)
+
 
             trial_model.fit(
                 X_train, y_train, features_name=features_name, eval_set=(X_val, y_val)
@@ -258,5 +268,12 @@ def tune_hyperparameters(
         best_model.beta_2 = best_params["beta_2"]
         best_model.max_iter = best_params["max_iter"]
         best_model.n_iter_no_change = best_params["n_iter_no_change"]
+    elif isinstance(best_model, RandomForestRegressor):
+        best_model.n_estimators = best_params["n_estimators"]
+        best_model.max_depth = best_params["max_depth"]
+        best_model.min_samples_split = best_params["min_samples_split"]
+        best_model.min_samples_leaf = best_params["min_samples_leaf"]
+        best_model.max_features = best_params["max_features"]
+        best_model.min_weight_fraction_leaf = best_params["min_weight_fraction_leaf"]
 
     return best_model

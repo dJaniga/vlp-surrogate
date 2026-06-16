@@ -50,6 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
             "huber",
             "svr",
             "mlp",
+            "rfr"
         ],
         default="linear",
     )
@@ -159,11 +160,17 @@ def main():
             logger.info("Using bayesian ridge model")
             model = create_model("bayesian_ridge", seed=parsed_args.seed)
         elif parsed_args.model == "huber":
+            logger.info("Using huber model")
             model = create_model("huber", seed=parsed_args.seed)
         elif parsed_args.model == "svr":
+            logger.info("Using svr model")
             model = create_model("svr", seed=parsed_args.seed)
         elif parsed_args.model == "mlp":
+            logger.info("Using mlp model")
             model = create_model("mlp", seed=parsed_args.seed)
+        elif parsed_args.model == "rfr":
+            logger.info("Using rfr model")
+            model = create_model("rfr", seed=parsed_args.seed)
         else:
             raise ValueError(f"Unsupported model: {parsed_args.model}")
 
