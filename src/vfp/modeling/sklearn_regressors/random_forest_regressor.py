@@ -13,14 +13,19 @@ class RandomForestRegressor(VFPModel):
     n_estimators: int = 100
     max_depth: int | None = None
     min_samples_split: int = 2
-    min_samples_leaf = 1,
-    min_weight_fraction_leaf = 0.4,
+    min_samples_leaf = (1,)
+    min_weight_fraction_leaf = (0.4,)
     max_features = 1
 
     seed: int | None = None
 
-    def fit(self, features: np.ndarray, targets: np.ndarray, features_name: tuple[str, ...] | None = None,
-            eval_set: tuple[np.ndarray, np.ndarray] | None = None) -> VFPModel:
+    def fit(
+        self,
+        features: np.ndarray,
+        targets: np.ndarray,
+        features_name: tuple[str, ...] | None = None,
+        eval_set: tuple[np.ndarray, np.ndarray] | None = None,
+    ) -> VFPModel:
         self._model = SKRandomForestRegressor(
             n_estimators=self.n_estimators,
             max_depth=self.max_depth,

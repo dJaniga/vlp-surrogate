@@ -9,12 +9,15 @@ from sklearn.model_selection import KFold
 
 from vfp.modeling.base import VFPModel
 from vfp.modeling.gaussian_process import GaussianProcessRegressor
+from vfp.modeling.gmdh.gmdh_regressor import GMDHRegressor
 from vfp.modeling.sklearn_regressors.bayesian_ridge_regressor import (
     BayesianRidgeRegressor,
 )
 from vfp.modeling.sklearn_regressors.elastic_net_regressor import ElasticNetRegressor
 from vfp.modeling.sklearn_regressors.mlp_regressor import MLPRegressor
-from vfp.modeling.sklearn_regressors.random_forest_regressor import RandomForestRegressor
+from vfp.modeling.sklearn_regressors.random_forest_regressor import (
+    RandomForestRegressor,
+)
 from vfp.modeling.sklearn_regressors.svr_regressor import SVRRegressor
 from vfp.modeling.sklearn_regressors.xgboost_regressor import XGBoostRegressor
 from vfp.modeling.symbolic.symbolic_regressor import SymbolicRegressor
@@ -45,7 +48,8 @@ def tune_hyperparameters(
             GaussianProcessRegressor,
             SVRRegressor,
             MLPRegressor,
-            RandomForestRegressor
+            RandomForestRegressor,
+            GMDHRegressor,
         ),
     ):
         logger.warning(
@@ -162,9 +166,9 @@ def tune_hyperparameters(
                 )
                 trial_model.degree = trial.suggest_int("degree", 1, 5)
             elif isinstance(trial_model, MLPRegressor):
-                n_layers = trial.suggest_int("n_layers", 1, 3)
+                n_layers = trial.suggest_int("n_layers", 1, 5)
                 hidden_layer_sizes = tuple(
-                    trial.suggest_int(f"n_units_l{i}", 32, 256, step=32)
+                    trial.suggest_int(f"n_units_l{i}", 16, 256, step=16)
                     for i in range(n_layers)
                 )
                 trial_model.hidden_layer_sizes = hidden_layer_sizes
@@ -180,18 +184,31 @@ def tune_hyperparameters(
                 )
                 trial_model.beta_1 = trial.suggest_float("beta_1", 0.85, 0.99)
                 trial_model.beta_2 = trial.suggest_float("beta_2", 0.99, 0.9999)
-                trial_model.max_iter = trial.suggest_int("max_iter", 100, 500, step=100)
-                trial_model.n_iter_no_change = trial.suggest_int(
-                    "n_iter_no_change", 5, 20
-                )
+
             elif isinstance(trial_model, RandomForestRegressor):
                 trial_model.n_estimators = trial.suggest_int("n_estimators", 10, 10000)
                 trial_model.max_depth = trial.suggest_int("max_depth", 1, 100)
-                trial_model.min_samples_split = trial.suggest_int("min_samples_split", 2, 10)
-                trial_model.min_samples_leaf = trial.suggest_int("min_samples_leaf", 1, 10)
-                trial_model.max_features = trial.suggest_float("max_features",0.01, 1)
-                trial_model.min_weight_fraction_leaf = trial.suggest_float("min_weight_fraction_leaf",0.001, 0.499)
-
+                trial_model.min_samples_split = trial.suggest_int(
+                    "min_samples_split", 2, 10
+                )
+                trial_model.min_samples_leaf = trial.suggest_int(
+                    "min_samples_leaf", 1, 10
+                )
+                trial_model.max_features = trial.suggest_float("max_features", 0.01, 1)
+                trial_model.min_weight_fraction_leaf = trial.suggest_float(
+                    "min_weight_fraction_leaf", 0.001, 0.499
+                )
+            elif isinstance(trial_model, GMDHRegressor):
+                trial_model.max_layer_count = trial.suggest_int(
+                    "max_layer_count", 1, 100
+                )
+                trial_model.criterion_minimum_width = trial.suggest_int(
+                    "criterion_minimum_width", 1, 10
+                )
+                trial_model.layer_err_criterion = trial.suggest_categorical(
+                    "layer_err_criterion", ["top", "avg"]
+                )
+                trial_model.l2 = trial.suggest_float("l2", 0.0, 1.0)
 
             trial_model.fit(
                 X_train, y_train, features_name=features_name, eval_set=(X_val, y_val)
@@ -266,8 +283,6 @@ def tune_hyperparameters(
         best_model.learning_rate_init = best_params["learning_rate_init"]
         best_model.beta_1 = best_params["beta_1"]
         best_model.beta_2 = best_params["beta_2"]
-        best_model.max_iter = best_params["max_iter"]
-        best_model.n_iter_no_change = best_params["n_iter_no_change"]
     elif isinstance(best_model, RandomForestRegressor):
         best_model.n_estimators = best_params["n_estimators"]
         best_model.max_depth = best_params["max_depth"]
@@ -275,5 +290,10 @@ def tune_hyperparameters(
         best_model.min_samples_leaf = best_params["min_samples_leaf"]
         best_model.max_features = best_params["max_features"]
         best_model.min_weight_fraction_leaf = best_params["min_weight_fraction_leaf"]
+    elif isinstance(best_model, GMDHRegressor):
+        best_model.max_layer_count = best_params["max_layer_count"]
+        best_model.criterion_minimum_width = best_params["criterion_minimum_width"]
+        best_model.layer_err_criterion = best_params["layer_err_criterion"]
+        best_model.l2 = best_params["l2"]
 
     return best_model

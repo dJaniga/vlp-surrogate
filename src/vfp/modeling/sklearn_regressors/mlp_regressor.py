@@ -3,6 +3,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+os.environ["OMP_NUM_THREADS"] = "4"
+
 import numpy as np
 
 from vfp.modeling import VFPModel
@@ -21,13 +23,14 @@ class MLPRegressor(VFPModel):
     hidden_layer_sizes = (100,)
     activation = "relu"
     alpha = 0.0001
-    learning_rate = "constant"
+    solver = "lbfgs"
+    learning_rate = "invscaling"
     learning_rate_init = 0.001
-    max_iter = 200
+    max_iter = 500
     shuffle = True
     beta_1 = 0.9
     beta_2 = 0.999
-    n_iter_no_change = 10
+    n_iter_no_change = 50
     seed: int | None = None
     _early_stopping: bool = False
     _eval_history: list[dict[str, float]] = field(default_factory=list)
@@ -83,7 +86,7 @@ class MLPRegressor(VFPModel):
                 monitored_loss = train_loss
 
             self._eval_history.append(iteration_log)
-            logger.debug("Iter %d | %s", iteration, iteration_log)
+            # logger.debug("Iter %d | %s", iteration, iteration_log)
 
             if monitored_loss < best_eval_loss - self._tol:
                 best_eval_loss = monitored_loss

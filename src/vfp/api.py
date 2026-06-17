@@ -10,6 +10,7 @@ from vfp.details import VFPDetails
 from vfp.export import export_VFP_manifest
 from vfp.modeling import VFPModel
 from vfp.modeling.gaussian_process import GaussianProcessRegressor
+from vfp.modeling.gmdh.gmdh_regressor import GMDHRegressor
 from vfp.modeling.sklearn_regressors import (
     LinearRegressor,
     ElasticNetRegressor,
@@ -18,7 +19,9 @@ from vfp.modeling.sklearn_regressors import (
     HuberRegressor,
 )
 from vfp.modeling.sklearn_regressors.mlp_regressor import MLPRegressor
-from vfp.modeling.sklearn_regressors.random_forest_regressor import RandomForestRegressor
+from vfp.modeling.sklearn_regressors.random_forest_regressor import (
+    RandomForestRegressor,
+)
 from vfp.modeling.sklearn_regressors.svr_regressor import SVRRegressor
 from vfp.modeling.symbolic import SymbolicRegressor
 
@@ -36,7 +39,8 @@ ModelName = Literal[
     "huber",
     "svr",
     "mlp",
-    "rfr"
+    "rfr",
+    "gmdh"
 ]
 
 
@@ -67,6 +71,8 @@ def create_model(name: ModelName, **kwargs) -> VFPModel:
         return MLPRegressor(**kwargs)
     if name == "rfr":
         return RandomForestRegressor(**kwargs)
+    if name == "gmdh":
+        return GMDHRegressor(**kwargs)
     raise ValueError(f"Unsupported model name: {name}")
 
 
