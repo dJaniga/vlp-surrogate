@@ -52,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
             "mlp",
             "rfr",
             "gmdh",
+            "mp5",
         ],
         default="linear",
     )
@@ -175,6 +176,9 @@ def main():
         elif parsed_args.model == "gmdh":
             logger.info("Using gmdh model")
             model = create_model("gmdh", seed=parsed_args.seed)
+        elif parsed_args.model == "mp5":
+            logger.info("Using mp5 model")
+            model = create_model("mp5", seed=parsed_args.seed)
         else:
             raise ValueError(f"Unsupported model: {parsed_args.model}")
 

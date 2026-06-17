@@ -11,6 +11,7 @@ from vfp.export import export_VFP_manifest
 from vfp.modeling import VFPModel
 from vfp.modeling.gaussian_process import GaussianProcessRegressor
 from vfp.modeling.gmdh.gmdh_regressor import GMDHRegressor
+from vfp.modeling.m5prime.mp5prime_regressor import MP5PrimeRegressor
 from vfp.modeling.sklearn_regressors import (
     LinearRegressor,
     ElasticNetRegressor,
@@ -40,7 +41,8 @@ ModelName = Literal[
     "svr",
     "mlp",
     "rfr",
-    "gmdh"
+    "gmdh",
+    "mp5",
 ]
 
 
@@ -73,6 +75,8 @@ def create_model(name: ModelName, **kwargs) -> VFPModel:
         return RandomForestRegressor(**kwargs)
     if name == "gmdh":
         return GMDHRegressor(**kwargs)
+    if name == "mp5":
+        return MP5PrimeRegressor(**kwargs)
     raise ValueError(f"Unsupported model name: {name}")
 
 

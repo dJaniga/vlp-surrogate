@@ -4,12 +4,14 @@ import copy
 import logging
 import numpy as np
 import optuna
+from gmdhpy.gmdh import Regressor
 
 from sklearn.model_selection import KFold
 
 from vfp.modeling.base import VFPModel
 from vfp.modeling.gaussian_process import GaussianProcessRegressor
 from vfp.modeling.gmdh.gmdh_regressor import GMDHRegressor
+from vfp.modeling.m5prime.mp5prime_regressor import MP5PrimeRegressor
 from vfp.modeling.sklearn_regressors.bayesian_ridge_regressor import (
     BayesianRidgeRegressor,
 )
@@ -50,6 +52,7 @@ def tune_hyperparameters(
             MLPRegressor,
             RandomForestRegressor,
             GMDHRegressor,
+            MP5PrimeRegressor,
         ),
     ):
         logger.warning(
@@ -209,6 +212,27 @@ def tune_hyperparameters(
                     "layer_err_criterion", ["top", "avg"]
                 )
                 trial_model.l2 = trial.suggest_float("l2", 0.0, 1.0)
+            elif isinstance(trial_model, MP5PrimeRegressor):
+                trial_model.max_depth = trial.suggest_int("max_depth", 1, 100)
+                trial_model.min_samples_leaf = trial.suggest_int("min_samples_leaf", 1, 100)
+                trial_model.ccp_alpha = trial.suggest_float("ccp_alpha", 0.0, 1)
+                trial_model.leaf_ridge_alpha = trial.suggest_float("leaf_ridge_alpha", 0.0, 1)
+                trial_model.smoothing_k = trial.suggest_float("smoothing_k", 0.0, 100.0)
+                trial_model.use_smoothing = trial.suggest_categorical("use_smoothing", [True, False])
+                trial_model.use_path_features = trial.suggest_categorical("use_path_features", [True, False])
+                # trial_model.min_samples_split = trial.suggest_int(
+                #     "min_samples_split", 2, 100
+                # )
+                # trial_model.min_samples_leaf = trial.suggest_int(
+                #     "min_samples_leaf", 1, 100
+                # )
+                # trial_model.min_weight_fraction_leaf = trial.suggest_float(
+                #     "min_weight_fraction_leaf", 0.0, 0.5
+                # )
+                # trial_model.min_impurity_decrease = trial.suggest_float(
+                #     "min_impurity_decrease", 0.0, 0.5
+                # )
+                # trial_model.ccp_alpha = trial.suggest_float("ccp_alpha", 0.0, 1)
 
             trial_model.fit(
                 X_train, y_train, features_name=features_name, eval_set=(X_val, y_val)
@@ -295,5 +319,13 @@ def tune_hyperparameters(
         best_model.criterion_minimum_width = best_params["criterion_minimum_width"]
         best_model.layer_err_criterion = best_params["layer_err_criterion"]
         best_model.l2 = best_params["l2"]
+    elif isinstance(best_model, MP5PrimeRegressor):
+        best_model.max_depth = best_params["max_depth"]
+        best_model.min_samples_leaf = best_params["min_samples_leaf"]
+        best_model.ccp_alpha = best_params["ccp_alpha"]
+        best_model.leaf_ridge_alpha = best_params["leaf_ridge_alpha"]
+        best_model.smoothing_k = best_params["smoothing_k"]
+        best_model.use_smoothing = best_params["use_smoothing"]
+        best_model.use_path_features = best_params["use_path_features"]
 
     return best_model

@@ -12,6 +12,7 @@ from gmdhpy.gmdh import Regressor
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass(slots=True)
 class GMDHRegressor(VFPModel):
     _model: Regressor = field(default=None, init=False)
@@ -64,12 +65,8 @@ class GMDHRegressor(VFPModel):
         return parse_model_report(self._model.describe())
 
 
-
 def parse_model_report(text: str) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "model": {},
-        "layers": []
-    }
+    result: dict[str, Any] = {"model": {}, "layers": []}
 
     # -------------------------
     # Model section
@@ -118,8 +115,7 @@ def parse_model_report(text: str) -> dict[str, Any]:
 
             elif key == "Selected features by index":
                 result["model"]["selected_features_by_index"] = [
-                    int(x)
-                    for x in re.findall(r"\d+", value)
+                    int(x) for x in re.findall(r"\d+", value)
                 ]
 
             elif key == "Selected features by name":
@@ -129,8 +125,7 @@ def parse_model_report(text: str) -> dict[str, Any]:
 
             elif key == "Unselected features by index":
                 result["model"]["unselected_features_by_index"] = [
-                    int(x)
-                    for x in re.findall(r"\d+", value)
+                    int(x) for x in re.findall(r"\d+", value)
                 ]
 
             elif key == "Unselected features by name":
@@ -175,13 +170,8 @@ def parse_model_report(text: str) -> dict[str, Any]:
             }
 
             # Inputs
-            for input_match in re.finditer(
-                r"(u\d+):\s*(.+)",
-                block
-            ):
-                neuron["inputs"][input_match.group(1)] = (
-                    input_match.group(2).strip()
-                )
+            for input_match in re.finditer(r"(u\d+):\s*(.+)", block):
+                neuron["inputs"][input_match.group(1)] = input_match.group(2).strip()
 
             # Errors
             m = re.search(r"train error:\s*([-\deE.]+)", block)
@@ -197,10 +187,7 @@ def parse_model_report(text: str) -> dict[str, Any]:
                 neuron["bias_error"] = float(m.group(1))
 
             # Weights
-            for weight_name, weight_value in re.findall(
-                r"(w\d+)=([-\deE.]+)",
-                block
-            ):
+            for weight_name, weight_value in re.findall(r"(w\d+)=([-\deE.]+)", block):
                 neuron["weights"][weight_name] = float(weight_value)
 
             # Norm

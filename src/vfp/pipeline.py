@@ -20,6 +20,7 @@ from vfp.preprocess.filters import filter_valid_operating_conditions
 
 logger = logging.getLogger(__name__)
 
+TOL = 1e-6
 
 @dataclass(frozen=True)
 class VFPPipelineConfig:
@@ -51,10 +52,23 @@ def is_valid(table_type: VFPType, table: VFPTable) -> bool:
     if table_type == VFPType.INJECTION:
         for record in table.body:
             bhp = record.tolist()[1:]
-            is_non_increasing = all(bhp[i] <= bhp[i - 1] for i in range(1, len(bhp)))
+
+            are_constants = all(
+                abs(bhp[i] - bhp[i - 1]) < TOL
+                for i in range(1, len(bhp))
+            )
+            if are_constants:
+                logger.error(f"BHP VALUES MUST NOT BE CONSTANTS!: {bhp}")
+                return False
+
+            is_non_increasing = all(
+                bhp[i] <= bhp[i - 1] + TOL
+                for i in range(1, len(bhp))
+            )
             if not is_non_increasing:
                 logger.error(f"BHP VALUES MUST NOT INCREASE WITH FLOW RATE!: {bhp}")
                 return False
+
         else:
             return True
     else:
@@ -115,7 +129,7 @@ def vfp_pipeline(
             break
 
         if attempt == max_seed_retries:
-            raise ValueError("BHP VALUES MUST NOT INCREASE WITH FLOW RATE!")
+            raise ValueError("BHP VALUES VALIDATION FAILED AFTER MAX RETRIES!")
 
         logger.error("BHP validation failed, will retry with a different seed.")
 
