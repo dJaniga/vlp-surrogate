@@ -6,8 +6,6 @@ requires-python = ">=3.14,<3.15"
 dependencies = [
     "deap>=1.4.3",
     "gmdhpy",
-    "line-profiler-pycharm>=1.2.0",
-    "m5py>=0.3.3",
     "mypy>=1.19.1",
     "numpy>=2.4.2",
     "optuna>=4.7.0",

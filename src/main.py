@@ -128,10 +128,8 @@ def main():
 
     setup_logging(log_path=log_path)
 
-    os.environ["VLP_FIT_METRIC"] = parsed_args.tuning_metric
-    os.environ["VLP_FORCE_SYMBOLIC_SIMPLICITY"] = str(
-        parsed_args.force_symbolic_simplicity
-    )
+
+
 
     from vfp.api import create_model
     from vfp import run_pipeline, run_evaluator
@@ -141,6 +139,12 @@ def main():
         np.random.seed(parsed_args.seed)
 
     if parsed_args.mode == "pipeline":
+
+        os.environ["VLP_FIT_METRIC"] = parsed_args.tuning_metric
+        os.environ["VLP_FORCE_SYMBOLIC_SIMPLICITY"] = str(
+            parsed_args.force_symbolic_simplicity
+        )
+
         logger.info("Running in pipeline mode", extra={"Parsed args": parsed_args})
 
         if parsed_args.model == "symbolic":
