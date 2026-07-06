@@ -6,7 +6,7 @@ import numpy as np
 import optuna
 from gmdhpy.gmdh import Regressor
 
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, GroupKFold
 
 from vfp.modeling.base import VFPModel
 from vfp.modeling.gaussian_process import GaussianProcessRegressor
@@ -38,6 +38,7 @@ def tune_hyperparameters(
     n_splits: int = 3,
     tuning_metric: str = "root_mean_squared_error",
     seed: int | None = None,
+    groups: np.ndarray | None = None,
 ) -> VFPModel:
     if not isinstance(
         model,
@@ -65,16 +66,51 @@ def tune_hyperparameters(
     sampler = optuna.samplers.TPESampler(seed=seed)
     study = optuna.create_study(direction=direction, sampler=sampler)
 
-    kf = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    # ---------------------------------------------------------------------- #
+    # Inner CV splitter — group-aware (per production cycle) if `groups` is  #
+    # provided, otherwise falls back to standard shuffled KFold. Using       #
+    # GroupKFold here keeps every observation from the same cycle on the     #
+    # same side of a fold, avoiding leakage from within-cycle autocorrelation#
+    # during hyperparameter search, consistent with the outer CV in         #
+    # ModelWrapper.fit.                                                      #
+    # ---------------------------------------------------------------------- #
+    if groups is not None:
+        n_groups = len(np.unique(groups))
+        if n_groups < 2:
+            logger.warning(
+                "Only one cycle available in this tuning subset — group-based "
+                "inner CV cannot create meaningful splits. Falling back to "
+                "standard shuffled KFold for hyperparameter tuning."
+            )
+            kf = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
+            split_args = (features,)
+            split_kwargs = {}
+        else:
+            effective_splits = min(n_splits, n_groups)
+            if effective_splits < n_splits:
+                logger.warning(
+                    f"Requested n_splits={n_splits} for hyperparameter tuning "
+                    f"but only {n_groups} cycles are available in this subset "
+                    f"— reducing to {effective_splits} splits."
+                )
+            kf = GroupKFold(n_splits=effective_splits)
+            split_args = (features,)
+            split_kwargs = {"groups": groups}
+    else:
+        kf = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
+        split_args = (features,)
+        split_kwargs = {}
 
     def objective(trial: optuna.Trial) -> float:
         cv_scores = []
 
         logger.debug(f"Running trial {trial.number + 1} of {n_trials}")
 
-        for idx, (train_idx, val_idx) in enumerate(kf.split(features)):
+        for idx, (train_idx, val_idx) in enumerate(
+            kf.split(*split_args, **split_kwargs)
+        ):
             logger.debug(
-                f"Running inner CV fold {idx + 1} of {n_splits} for {type(model).__name__} hyperparameter tuning"
+                f"Running inner CV fold {idx + 1} of {kf.get_n_splits(*split_args, **split_kwargs)} for {type(model).__name__} hyperparameter tuning"
             )
             X_train, X_val = features[train_idx], features[val_idx]
             y_train, y_val = targets[train_idx], targets[val_idx]

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, GroupKFold
 from sklearn.preprocessing import StandardScaler
 import copy
 import numpy as np
@@ -42,6 +42,37 @@ class VFPModel(ABC):
     def get_fit_details(self) -> dict[str, Any]: ...
 
 
+def compute_cycle_ids(dates: np.ndarray, cycle_gap_days: int) -> np.ndarray:
+    """
+    Assigns a cycle ID to each observation based on elapsed time between
+    consecutive (chronologically sorted) observations.
+
+    A new cycle starts whenever the gap between two consecutive dates
+    exceeds `cycle_gap_days` (e.g. a switch from injection back to
+    production after a shut-in/injection period).
+
+    Parameters
+    ----------
+    dates : np.ndarray
+        Array of datetime64 values, assumed sorted ascending.
+    cycle_gap_days : int
+        Threshold, in days, above which a gap is considered a new cycle.
+
+    Returns
+    -------
+    np.ndarray
+        Integer array of the same length as `dates`, with a cycle ID
+        (0-indexed, monotonically increasing) for each observation.
+    """
+    if len(dates) == 0:
+        return np.array([], dtype=int)
+
+    dt_days = np.diff(dates).astype("timedelta64[D]").astype(int)
+    cycle_breaks = dt_days > cycle_gap_days
+    cycle_id = np.concatenate([[0], np.cumsum(cycle_breaks)])
+    return cycle_id.astype(int)
+
+
 @dataclass
 class ModelWrapper:
     model: VFPModel
@@ -49,6 +80,8 @@ class ModelWrapper:
     seed: int | None = None
     feature_scaler: StandardScaler = field(default_factory=StandardScaler)
     target_scaler: StandardScaler = field(default_factory=StandardScaler)
+    group_by_cycle: bool = True
+    cycle_gap_days: int = 100
 
     def __post_init__(self) -> None:
         if self.seed is None:
@@ -78,6 +111,25 @@ class ModelWrapper:
         targets = np.asarray(targets)
 
         # ------------------------------------------------------------------ #
+        # Ensure chronological order before computing gaps / cycle IDs.       #
+        # Downstream code (dt, cycle_id) assumes `dates` is sorted ascending, #
+        # so we sort everything consistently by date first.                  #
+        # ------------------------------------------------------------------ #
+        dates = index.astype("datetime64[D]")
+        sort_order = np.argsort(dates)
+        if not np.array_equal(sort_order, np.arange(len(dates))):
+            logger.warning(
+                "Input index was not sorted chronologically — sorting "
+                "features/targets/index by date before cycle detection."
+            )
+        dates = dates[sort_order]
+        index = index[sort_order]
+        features = features[sort_order]
+        targets = targets[sort_order]
+
+        dt = np.diff(dates).astype("timedelta64[D]")
+
+        # ------------------------------------------------------------------ #
         # 0. STANDARDIZE features and targets                                  #
         # ------------------------------------------------------------------ #
         features = self.feature_scaler.fit_transform(features)
@@ -87,15 +139,56 @@ class ModelWrapper:
         # 1. NESTED CROSS-VALIDATION — unbiased generalization estimate        #
         #    Outer fold: held-out eval                                         #
         #    Inner fold (optional): hyperparameter tuning                      #
+        #                                                                       #
+        #    If group_by_cycle is True, entire production cycles are kept      #
+        #    together in either train or validation — never split across       #
+        #    both — to avoid leakage from within-cycle autocorrelation.        #
+        #    Cycles are detected as runs of observations separated by gaps     #
+        #    of at most `cycle_gap_days`; a gap larger than that (e.g. an      #
+        #    injection period) marks the start of a new cycle.                 #
         # ------------------------------------------------------------------ #
-        outer_kf = KFold(n_splits=outer_splits, shuffle=True, random_state=self.seed)
+        if self.group_by_cycle:
+            cycle_id = compute_cycle_ids(dates, self.cycle_gap_days)
+            n_cycles = len(np.unique(cycle_id))
+            logger.info(
+                f">>>> Detected {n_cycles} production cycle(s) "
+                f"(gap threshold: {self.cycle_gap_days} days)."
+            )
+
+            if n_cycles < 2:
+                logger.warning(
+                    "Only one cycle detected — group-based CV cannot create "
+                    "meaningful splits. Falling back to standard shuffled "
+                    "KFold. Check cycle_gap_days or your date index if this "
+                    "is unexpected."
+                )
+                outer_kf = KFold(
+                    n_splits=outer_splits, shuffle=True, random_state=self.seed
+                )
+                split_iter = outer_kf.split(features)
+            else:
+                effective_splits = min(outer_splits, n_cycles)
+                if effective_splits < outer_splits:
+                    logger.warning(
+                        f"Requested outer_splits={outer_splits} but only "
+                        f"{n_cycles} cycles are available — reducing to "
+                        f"{effective_splits} splits so every fold gets at "
+                        f"least one full cycle."
+                    )
+                outer_kf = GroupKFold(n_splits=effective_splits)
+                split_iter = outer_kf.split(features, groups=cycle_id)
+        else:
+            cycle_id = None
+            outer_kf = KFold(
+                n_splits=outer_splits, shuffle=True, random_state=self.seed
+            )
+            split_iter = outer_kf.split(features)
+
         outer_metrics_list: list[dict] = []
         outer_fold_sizes: list[int] = []
 
-        for outer_idx, (outer_train_idx, outer_val_idx) in enumerate(
-            outer_kf.split(features)
-        ):
-            logger.debug(f"*** Outer CV fold {outer_idx + 1}/{outer_splits} ***")
+        for outer_idx, (outer_train_idx, outer_val_idx) in enumerate(split_iter):
+            logger.debug(f"*** Outer CV fold {outer_idx + 1} ***")
 
             X_outer_train, X_outer_val = (
                 features[outer_train_idx],
@@ -108,9 +201,16 @@ class ModelWrapper:
 
             fold_model = copy.deepcopy(self.model)
 
-            # Inner loop: tune only on outer training data, never touches outer_val
+            # Inner loop: tune only on outer training data, never touches outer_val.
+            # Cycle groups (if enabled) are sliced to the outer-train subset so
+            # the inner CV used for hyperparameter search also respects cycle
+            # boundaries, consistent with the outer CV split above.
             if optimize_hyperparameters:
                 from vfp.modeling.tuning import tune_hyperparameters
+
+                inner_groups = (
+                    cycle_id[outer_train_idx] if cycle_id is not None else None
+                )
 
                 fold_model = tune_hyperparameters(
                     fold_model,
@@ -120,6 +220,7 @@ class ModelWrapper:
                     features_name=_features_name,
                     seed=self.seed,
                     n_splits=inner_splits,  # inner CV splits
+                    groups=inner_groups,
                 )
 
             fold_model.fit(
@@ -175,6 +276,7 @@ class ModelWrapper:
                 features_name=_features_name,
                 seed=self.seed,
                 n_splits=inner_splits,
+                groups=cycle_id,
             )
 
         self.model.fit(features, targets, features_name=_features_name)
