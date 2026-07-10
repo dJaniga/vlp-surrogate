@@ -8,7 +8,7 @@ MAXIMIZE_METRICS = {
     "r2_score",
 }
 
-AVAILABLE_METRICS = [
+AVAILABLE_METRICS = {
     "d2_absolute_error_score",
     "d2_pinball_score",
     "d2_tweedie_score",
@@ -26,7 +26,7 @@ AVAILABLE_METRICS = [
     "r2_score",
     "root_mean_squared_error",
     "root_mean_squared_log_error",
-]
+}
 
 
 def get_metric_direction(metric_name: str) -> str:

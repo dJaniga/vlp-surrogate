@@ -1,14 +1,13 @@
 import argparse
 import logging
+import os
 from pathlib import Path
 import random
 
 import numpy as np
 
 from toolbox import setup_logging
-from vfp import run_pipeline, run_evaluator
-from vfp.api import create_model
-from vfp.modeling.tuning_metrics import AVAILABLE_METRICS
+
 
 logger = logging.getLogger(__name__)
 
@@ -49,56 +48,13 @@ def build_parser() -> argparse.ArgumentParser:
             "elasticnet",
             "bayesian_ridge",
             "huber",
+            "svr",
+            "mlp",
+            "rfr",
+            "gmdh",
+            "mp5",
         ],
         default="linear",
-    )
-
-    # -----------------------------------------------------------------------------
-    # Symbolic model parameters
-    # -----------------------------------------------------------------------------
-
-    parser_pipeline.add_argument(
-        "--ga-generations", type=int, default=80, help="GA generations."
-    )
-    parser_pipeline.add_argument(
-        "--ga-population", type=int, default=100, help="GA population size."
-    )
-
-    parser_pipeline.add_argument(
-        "--n-islands",
-        type=int,
-        default=4,
-        help="Number of islands for symbolic island-model GP.",
-    )
-    parser_pipeline.add_argument(
-        "--migration-interval",
-        type=int,
-        default=5,
-        help="Generations between island migrations.",
-    )
-    parser_pipeline.add_argument(
-        "--migration-size",
-        type=int,
-        default=3,
-        help="Number of individuals migrated between islands.",
-    )
-    parser_pipeline.add_argument(
-        "--simplify-interval",
-        type=int,
-        default=5,
-        help="Generations between SymPy simplification passes (0 to disable).",
-    )
-    parser_pipeline.add_argument(
-        "--parsimony-coefficient",
-        type=float,
-        default=0.001,
-        help="Parsimony pressure coefficient (penalty per tree node).",
-    )
-    parser_pipeline.add_argument(
-        "--max-tree-height",
-        type=int,
-        default=6,
-        help="Maximum GP tree height.",
     )
 
     parser_pipeline.add_argument("--seed", type=int, default=None, help="Random seed.")
@@ -125,8 +81,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--tuning-metric",
         type=str,
         help="Metric to optimize during hyperparameter tuning (e.g., mean_squared_error, r2_score).",
-        choices=AVAILABLE_METRICS,
         default="mean_squared_error",
+    )
+    parser_pipeline.add_argument(
+        "--force-symbolic-simplicity",
+        action="store_true",
+        help="Force symbolic regression to produce simpler models",
+        default=False,
     )
 
     parser_evaluator = subparsers.add_parser(
@@ -154,30 +115,41 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main():
-    setup_logging()
+
     parser = build_parser()
     parsed_args = parser.parse_args()
+
+    if parsed_args.mode == "pipeline":
+        log_path = (
+            parsed_args.output_folder / parsed_args.model / f"{parsed_args.model}.log"
+        )
+    else:
+        log_path = None
+
+    setup_logging(log_path=log_path)
+
+
+
+
+    from vfp.api import create_model
+    from vfp import run_pipeline, run_evaluator
+
     if parsed_args.seed is not None:
         random.seed(parsed_args.seed)
         np.random.seed(parsed_args.seed)
 
     if parsed_args.mode == "pipeline":
+
+        os.environ["VLP_FIT_METRIC"] = parsed_args.tuning_metric
+        os.environ["VLP_FORCE_SYMBOLIC_SIMPLICITY"] = str(
+            parsed_args.force_symbolic_simplicity
+        )
+
         logger.info("Running in pipeline mode", extra={"Parsed args": parsed_args})
 
         if parsed_args.model == "symbolic":
             logger.info("Using symbolic model", extra={"model": "symbolic"})
-            model = create_model(
-                "symbolic",
-                generations=parsed_args.ga_generations,
-                population_size=parsed_args.ga_population,
-                seed=parsed_args.seed,
-                n_islands=parsed_args.n_islands,
-                migration_interval=parsed_args.migration_interval,
-                migration_size=parsed_args.migration_size,
-                simplify_interval=parsed_args.simplify_interval,
-                parsimony_coefficient=parsed_args.parsimony_coefficient,
-                max_tree_height=parsed_args.max_tree_height,
-            )
+            model = create_model("symbolic", seed=parsed_args.seed)
         elif parsed_args.model == "linear":
             logger.info("Using linear model", extra={"model": "linear"})
             model = create_model("linear", seed=parsed_args.seed)
@@ -194,15 +166,33 @@ def main():
             logger.info("Using bayesian ridge model")
             model = create_model("bayesian_ridge", seed=parsed_args.seed)
         elif parsed_args.model == "huber":
+            logger.info("Using huber model")
             model = create_model("huber", seed=parsed_args.seed)
+        elif parsed_args.model == "svr":
+            logger.info("Using svr model")
+            model = create_model("svr", seed=parsed_args.seed)
+        elif parsed_args.model == "mlp":
+            logger.info("Using mlp model")
+            model = create_model("mlp", seed=parsed_args.seed)
+        elif parsed_args.model == "rfr":
+            logger.info("Using rfr model")
+            model = create_model("rfr", seed=parsed_args.seed)
+        elif parsed_args.model == "gmdh":
+            logger.info("Using gmdh model")
+            model = create_model("gmdh", seed=parsed_args.seed)
+        elif parsed_args.model == "mp5":
+            logger.info("Using mp5 model")
+            model = create_model("mp5", seed=parsed_args.seed)
         else:
             raise ValueError(f"Unsupported model: {parsed_args.model}")
+
+        output_folder = parsed_args.output_folder / parsed_args.model
 
         run_pipeline(
             source_file_path=parsed_args.input_file,
             vfp_details_file_path=parsed_args.vfp_details_file,
             surrogate_model=model,
-            output_folder_path=parsed_args.output_folder,
+            output_folder_path=output_folder,
             well_data_filter_path=parsed_args.well_data_filter_file,
             table_granularity=parsed_args.table_granularity,
             optimize_hyperparameters=parsed_args.optimize_hyperparameters,

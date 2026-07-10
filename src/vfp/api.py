@@ -1,6 +1,5 @@
 import json
 import logging
-import shutil
 from collections.abc import Set
 from pathlib import Path
 from typing import Literal
@@ -11,6 +10,8 @@ from vfp.details import VFPDetails
 from vfp.export import export_VFP_manifest
 from vfp.modeling import VFPModel
 from vfp.modeling.gaussian_process import GaussianProcessRegressor
+from vfp.modeling.gmdh.gmdh_regressor import GMDHRegressor
+from vfp.modeling.m5prime.mp5prime_regressor import MP5PrimeRegressor
 from vfp.modeling.sklearn_regressors import (
     LinearRegressor,
     ElasticNetRegressor,
@@ -18,6 +19,11 @@ from vfp.modeling.sklearn_regressors import (
     BayesianRidgeRegressor,
     HuberRegressor,
 )
+from vfp.modeling.sklearn_regressors.mlp_regressor import MLPRegressor
+from vfp.modeling.sklearn_regressors.random_forest_regressor import (
+    RandomForestRegressor,
+)
+from vfp.modeling.sklearn_regressors.svr_regressor import SVRRegressor
 from vfp.modeling.symbolic import SymbolicRegressor
 
 from vfp.pipeline import vfp_pipeline, VFPPROD_CONFIG, VFPINJ_CONFIG
@@ -25,7 +31,18 @@ from vfp.pipeline import vfp_pipeline, VFPPROD_CONFIG, VFPINJ_CONFIG
 logger = logging.getLogger(__name__)
 
 ModelName = Literal[
-    "linear", "symbolic", "xgb", "gp", "elasticnet", "bayesian_ridge", "huber"
+    "linear",
+    "symbolic",
+    "xgb",
+    "gp",
+    "elasticnet",
+    "bayesian_ridge",
+    "huber",
+    "svr",
+    "mlp",
+    "rfr",
+    "gmdh",
+    "mp5",
 ]
 
 
@@ -50,6 +67,16 @@ def create_model(name: ModelName, **kwargs) -> VFPModel:
         return BayesianRidgeRegressor(**kwargs)
     if name == "huber":
         return HuberRegressor(**kwargs)
+    if name == "svr":
+        return SVRRegressor(**kwargs)
+    if name == "mlp":
+        return MLPRegressor(**kwargs)
+    if name == "rfr":
+        return RandomForestRegressor(**kwargs)
+    if name == "gmdh":
+        return GMDHRegressor(**kwargs)
+    if name == "mp5":
+        return MP5PrimeRegressor(**kwargs)
     raise ValueError(f"Unsupported model name: {name}")
 
 
@@ -208,10 +235,6 @@ def run_pipeline(
     if table_granularity <= 2:
         raise ValueError("table_granularity must be greater than 2")
 
-    if output_folder_path.exists():
-        shutil.rmtree(output_folder_path)
-    output_folder_path.mkdir(parents=True, exist_ok=True)
-
     reader = initialize_reader_from_path(source_file_path)
 
     well_data_filter = _read_well_data_filter(well_data_filter_path)
@@ -241,23 +264,6 @@ def run_pipeline(
             )
             continue
 
-        # Production
-        prod_path = _process_well_stream(
-            well_name=well_name,
-            stream_name="production",
-            stream_data=flow_data.production,
-            vfp_section=getattr(vfp_details, "VFPPROD", None),
-            config=VFPPROD_CONFIG,
-            file_suffix="p",
-            output_folder_path=output_folder_path,
-            reference_model=reference_model,
-            table_granularity=table_granularity,
-            optimize_hyperparameters=optimize_hyperparameters,
-            tuning_metric=tuning_metric,
-        )
-        if prod_path is not None:
-            manifest_content.append(prod_path)
-
         inj_path = _process_well_stream(
             well_name=well_name,
             stream_name="injection",
@@ -273,6 +279,22 @@ def run_pipeline(
         )
         if inj_path is not None:
             manifest_content.append(inj_path)
+
+        prod_path = _process_well_stream(
+            well_name=well_name,
+            stream_name="production",
+            stream_data=flow_data.production,
+            vfp_section=getattr(vfp_details, "VFPPROD", None),
+            config=VFPPROD_CONFIG,
+            file_suffix="p",
+            output_folder_path=output_folder_path,
+            reference_model=reference_model,
+            table_granularity=table_granularity,
+            optimize_hyperparameters=optimize_hyperparameters,
+            tuning_metric=tuning_metric,
+        )
+        if prod_path is not None:
+            manifest_content.append(prod_path)
 
     if manifest_content:
         manifest_path = Path(output_folder_path, "VFP_manifest.txt")
@@ -290,10 +312,6 @@ def run_evaluator(
     output_folder_path: Path,
     well_data_filter_path: Path | None = None,
 ):
-    if output_folder_path.exists():
-        shutil.rmtree(output_folder_path)
-    output_folder_path.mkdir(parents=True, exist_ok=True)
-
     reader = initialize_reader_from_path(source_file_path)
 
     well_data_filter = _read_well_data_filter(well_data_filter_path)

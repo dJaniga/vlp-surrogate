@@ -5,6 +5,7 @@ description = "Data-driven estimation of vertical lift performance (VLP) curves 
 requires-python = ">=3.14,<3.15"
 dependencies = [
     "deap>=1.4.3",
+    "gmdhpy",
     "mypy>=1.19.1",
     "numpy>=2.4.2",
     "optuna>=4.7.0",
@@ -38,17 +39,20 @@ format = "%(asctime)s- %(module)-30s %(lineno)-4d - %(levelname)-8s - %(message)
 [tool.vlp_surrogate.logging.handlers.console]
 class = "logging.StreamHandler"
 formatter = "standard"
-level = "INFO"
+level = "DEBUG"
 stream = "ext://sys.stdout"
 
 [tool.vlp_surrogate.logging.handlers.file]
 class = "logging.FileHandler"
-level = "INFO"
+level = "DEBUG"
 formatter = "standard"
 filename = "logs/vlp_surrogate.log"
 encoding = "utf-8"
-mode = "a"
+mode = "w"
 
 [tool.vlp_surrogate.logging.root]
-level = "INFO"
+level = "DEBUG"
 handlers = ["console", "file"]
+
+[tool.uv.sources]
+gmdhpy = { git = "https://github.com/kvoyager/GmdhPy.git" }
